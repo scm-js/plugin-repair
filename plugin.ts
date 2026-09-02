@@ -15,8 +15,8 @@
  * editor's emitted type declarations, vendored so the repository type-checks alone.
  */
 import type { DialogHandle, DocumentEvent, PluginApi } from "./plugin-api/plugins/api";
-import { analyze, type Analysis, type Finding, type IsomFacts, type Level } from "./analyze";
-import { parseChunks, serializeChunks } from "./chk";
+import { analyze, describeName, type Analysis, type Finding, type IsomFacts, type Level } from "./analyze";
+import { parseChunks, readableName, serializeChunks } from "./chk";
 import { applyRepairs } from "./repair";
 
 export default function activate(api: PluginApi) {
@@ -172,7 +172,7 @@ class Session {
       });
       const row = el("div", { className: "rp-row" },
         el("span", { className: `rp-badge ${f.level}`, title: LEVEL_LABEL[f.level] }, LEVEL_LABEL[f.level]),
-        el("span", { className: "rp-sec", title: f.section ? api.document.sections.spec(f.section)?.what ?? "" : "the file" }, f.section ?? "file"),
+        el("span", { className: "rp-sec", title: f.section ? (readableName(f.section) ? api.document.sections.spec(f.section)?.what ?? "" : describeName(f.section)) : "the file" }, f.section ? (readableName(f.section) ? f.section : "????") : "file"),
         tick,
       );
       list.append(el("div", { className: "rp-item" }, row, el("div", { className: "rp-detail" }, f.detail)));

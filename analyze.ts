@@ -119,11 +119,14 @@ export function analyze(input: AnalysisInput): Analysis {
         repair: { kind: "remove", index }, recommended: true,
       });
     } else if (!spec.has(c.name)) {
+      const empty = c.data.length === 0;
       add({
         id: `unknown:${index}`, level: "info", section: c.name,
         title: `An unknown section ${c.name.trim()} (${fmt(c.data.length)} bytes)`,
-        detail: "The game ignores a section it does not know; some editors keep their own data this way. It is left in place.",
-        repair: null, recommended: false,
+        detail: empty
+          ? "The game ignores a section it does not know, and this one holds nothing — what a header with a negative length leaves behind once the editor has read the file. Removing it loses nothing."
+          : "The game ignores a section it does not know; some editors keep their own data this way. It is left in place.",
+        repair: empty ? { kind: "remove", index } : null, recommended: empty,
       });
     }
   });

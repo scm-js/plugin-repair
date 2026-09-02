@@ -120,6 +120,9 @@ describe("the container", () => {
     expect(junk.title).toContain('"\\x00\\x01\\x02\\x03"');
     expect(byId(a.findings, `unknown:${file.chunks.length - 1}`)).toMatchObject({ level: "info", repair: null });
     expect(describeName("RAW\xff")).toBe('"RAW\\xff"');
+    // An empty unknown section is what the editor makes of a negative-length header; it can go.
+    file.chunks.push(chunk("ABCD", new Uint8Array(0)));
+    expect(byId(analyze(input(file)).findings, `unknown:${file.chunks.length - 1}`)).toMatchObject({ level: "info", repair: { kind: "remove", index: file.chunks.length - 1 }, recommended: true });
   });
 
   it("reports repeats with the game's rule for the section", () => {
