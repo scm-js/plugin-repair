@@ -1,0 +1,11 @@
+{
+  "name": "Repair",
+  "id": "repair",
+  "version": "1.0.0",
+  "description": "Checks a map file the way the game reads it when it opens — missing, damaged, repeated and oddly sized sections, header values the game cannot use, a stripped or stale ISOM — says what the game does with each, and repairs what you tick. The original file stays at hand until the next map opens.",
+  "author": "Jeany",
+  "homepage": "https://github.com/scm-js/plugin-repair",
+  "entry": "plugin.ts",
+  "icon": "icon.svg",
+  "api": 1
+}
