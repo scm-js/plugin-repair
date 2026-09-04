@@ -96,6 +96,16 @@ The editor's own:
   note, since the two differ under every doodad by design;
 - sections out of StarEdit's order — reorder, unticked.
 
+What the map says — the one check about content rather than shape:
+
+- strings a remaster draws in a colour their author never chose. 1.16.1 started every
+  line in the default colour; Remastered carries the previous line's colour across the
+  break, so a colour set on one line bleeds into the next. The repair writes the reset
+  the old game supplied at the head of each of those lines, which makes both games draw
+  the string alike and changes nothing about what it says. It is unticked and always
+  will be: whether the map was written before or after the remaster is the one thing the
+  plugin cannot read off the file, so it explains and leaves the choice to you.
+
 What it does not do: anything at the archive level. A `.scx` whose MPQ is damaged fails
 before the editor has a file to hand the plugin.
 
@@ -108,9 +118,15 @@ a chunk list, plus what the editor knows about each section name (`api.document.
 the byte-level repairs to a chunk list, resolving indices to chunk objects first so a
 removal never shifts a later one. All three are pure and tested (`npm test`). `plugin.ts`
 listens for the `"document"` event with reason `"open"`, gathers the inputs, shows the
-dialog, and applies a repair in three steps: the byte-level ones as one
-`api.document.sections.replaceFile`, then `sections.rebuild` for the string table, then
-one `api.document.edit` with `tx.rebuildIsom`.
+dialog, and applies a repair in four steps, in this order: the byte-level ones as one
+`api.document.sections.replaceFile`; then the string colours through
+`api.document.update`, which goes via the editor's model and so stays undoable, where
+`replaceFile` installs a whole new scenario and would drop it; then `sections.rebuild`
+for the string table, which re-encodes STR from the model the step before wrote into;
+then one `api.document.edit` with `tx.rebuildIsom`. `colors.ts` holds the `TextHelpers`
+interface `analyze` takes its two colour readers through — `api.text.bleedingLines` and
+`.fixBleeding`, so the plugin carries no copy of the colour numbering, which is easy to
+get wrong and is worth having wrong in only one place.
 
 Types come from [`@scm-js/plugin-api`](https://github.com/scm-js/plugin-api), a devDependency
 generated from the editor's own `src/plugins/api.ts`; `npm update @scm-js/plugin-api` takes the

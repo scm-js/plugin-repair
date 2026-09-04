@@ -127,7 +127,7 @@ class Session {
     } catch {
       isom = "unchecked";
     }
-    return analyze({ file, known, required, vcod, isom });
+    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text });
   }
 
   /* ── The dialog ─────────────────────────────────────────── */
@@ -227,10 +227,33 @@ class Session {
     const done: string[] = [];
     try {
       const outcome = applyRepairs(parseChunks(sections.file()), chosen.map((f) => f.repair!), { known: sections.known(), defaults: (n) => sections.defaults(n) });
-      const byteLevel = chosen.filter((f) => f.repair!.kind !== "rebuild" && f.repair!.kind !== "rebuild-isom");
+      const hostRepairs = new Set(["rebuild", "rebuild-isom", "set-strings"]);
+      const byteLevel = chosen.filter((f) => !hostRepairs.has(f.repair!.kind));
       if (byteLevel.length > 0) {
         const r = sections.replaceFile(serializeChunks(outcome.file));
         done.push(`${plural(byteLevel.length, "repair")} written to the file${r.warnings.length > 0 ? ` — the parser still says: ${r.warnings.join("; ")}` : ""}`);
+      }
+      // After `replaceFile`, which installs a whole new scenario and would drop this, and
+      // before `rebuild`, which re-encodes STR from the model this writes into. The strings
+      // are read again here rather than carried in the repair, since the byte-level pass
+      // above may have moved them.
+      if (outcome.setStrings) {
+        let fixed = 0;
+        let lines = 0;
+        const r = api.document.update("Fix string colours", (tx) => {
+          for (const [index, entry] of tx.strings.list().entries()) {
+            if (entry === null) continue;
+            const next = api.text.fixBleeding(entry);
+            if (next === entry) continue;
+            lines += api.text.bleedingLines(entry).length;
+            tx.strings.set(index, next);
+            fixed++;
+          }
+          tx.note(`${plural(fixed, "string")} given the line-break colour reset`);
+        });
+        done.push(fixed === 0
+          ? "the strings already read the same in both games"
+          : `${plural(fixed, "string")} given the reset 1.16.1 supplied at ${plural(lines, "line break")}${r.changed ? "" : " (nothing changed)"}`);
       }
       if (outcome.rebuild.length > 0) {
         const r = sections.rebuild(outcome.rebuild);

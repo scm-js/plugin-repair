@@ -315,3 +315,67 @@ describe("order and sorting", () => {
     expect(a.findings[0].id).toBe("missing:TRIG");
   });
 });
+
+describe("string colours", () => {
+  /**
+   * A stand-in for `api.text`, so this stays a test of the finding rather than of the
+   * editor's colour table: a line "bleeds" when a previous line set a colour and it did
+   * not set one of its own, and fixing it writes the reset at the head of that line.
+   */
+  const RESET = "\x02";
+  const helpers = {
+    bleedingLines(s: string) {
+      const out: { line: number; carried: { code: string; label: string } }[] = [];
+      let carried: string | null = null;
+      s.split("\n").forEach((line, i) => {
+        if (i > 0 && carried !== null && !/^[\x01-\x1f]/.test(line)) {
+          out.push({ line: i, carried: { code: `<${carried.charCodeAt(0).toString(16).padStart(2, "0").toUpperCase()}>`, label: "Teal" } });
+        }
+        const codes = [...line].filter((c) => c.charCodeAt(0) < 0x20);
+        if (codes.length > 0) carried = codes[codes.length - 1];
+      });
+      return out;
+    },
+    fixBleeding(s: string) {
+      const lines = s.split("\n");
+      for (const { line } of helpers.bleedingLines(s)) lines[line] = RESET + lines[line];
+      return lines.join("\n");
+    },
+  };
+  const withStrings = (list: string[]) => input(goodFile(), { strings: list, text: helpers });
+
+  it("is silent when no line inherits a colour, and when the readers are not there", () => {
+    expect(ids(analyze(withStrings(["plain", "\x06red on one line"])).findings)).not.toContain("strings-bleed");
+    // No `strings`/`text` at all is the state before the map is open, not a clean bill.
+    expect(ids(analyze(input(goodFile())).findings)).not.toContain("strings-bleed");
+  });
+
+  it("reports the strings a remaster draws in a colour their author never set", () => {
+    const a = analyze(withStrings(["\x06red\nthis line too", null as unknown as string, "fine", "\x07green\na\nb"]));
+    const f = byId(a.findings, "strings-bleed");
+    expect(f.level).toBe("warn");
+    // The padded registry name, so the dialog's `sections.spec()` lookup finds it.
+    expect(f.section).toBe("STR ");
+    // Two strings, three lines between them — and a blank slot is not one of them.
+    expect(f.title).toContain("2 strings");
+    expect(f.detail).toContain("3 lines");
+    expect(f.repair).toEqual({ kind: "set-strings" });
+  });
+
+  it("never ticks itself: which game the map was made for is the one thing it cannot know", () => {
+    const f = byId(analyze(withStrings(["\x06red\nand on", "x"])).findings, "strings-bleed");
+    expect(f.recommended).toBe(false);
+    expect(f.detail).toMatch(/Remastered may mean the colours it shows/);
+    // It says what the repair does and that it is not a rewrite of the words.
+    expect(f.detail).toMatch(/changes nothing about what it says/);
+  });
+
+  it("quotes one of them, on one line, so the finding can be judged", () => {
+    const f = byId(analyze(withStrings(["\x06Briefing\x0dcontinues\nhere"])).findings, "strings-bleed");
+    // Every break is shown as one glyph and the colour bytes are dropped, so the quote
+    // stays on the sentence's own line instead of breaking the dialog's layout.
+    expect(f.detail).toContain('"Briefing⏎continues⏎here"');
+    expect(f.detail).not.toContain("\x06");
+    expect(f.detail).not.toContain("\n");
+  });
+});

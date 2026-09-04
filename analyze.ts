@@ -7,6 +7,7 @@
  * rewrites everything.
  */
 import { combine, named, parseChunks, readableName, u16, u32, type Chunk, type ChunkFile } from "./chk";
+import { snippet, type TextHelpers } from "./colors";
 import type { IsomReport, SectionKnowledge } from "@scm-js/plugin-api";
 
 export type Level = "error" | "warn" | "info";
@@ -33,7 +34,17 @@ export type Repair =
   /** Re-encode sections from the editor's model (`api.document.sections.rebuild`). */
   | { kind: "rebuild"; names: string[] }
   /** Reconstruct the ISOM lattice from the tiles (`tx.rebuildIsom`). */
-  | { kind: "rebuild-isom" };
+  | { kind: "rebuild-isom" }
+  /**
+   * Write the colour reset 1.16.1 supplied at every line break into the strings that
+   * need it (`api.text.fixBleeding` over `tx.strings`). The only repair that changes
+   * what the map *says* rather than how the file is put together, and the only one
+   * applied through `document.update` — so it marks STR dirty, goes through the editor's
+   * model and stays undoable, where the byte-level repairs replace the whole file.
+   * It carries no payload: the strings are read again at apply time, since the
+   * byte-level repairs run first and may have moved them.
+   */
+  | { kind: "set-strings" };
 
 export interface Finding {
   /** Stable across re-analyses of the same problem, so ticks survive a refresh. */
@@ -65,6 +76,10 @@ export interface AnalysisInput {
   vcod?: Uint8Array | null;
   /** The ISOM's state, or `"unchecked"` when the tileset graphics are not there to measure it. */
   isom: IsomFacts | "unchecked";
+  /** `api.query.strings()`. Absent skips the colour check, which is the only content one. */
+  strings?: (string | null)[];
+  /** `api.text`'s two colour readers. Absent skips the check with `strings`. */
+  text?: TextHelpers;
 }
 
 export interface Analysis {
@@ -411,6 +426,38 @@ export function analyze(input: AnalysisInput): Analysis {
           ? "The game draws MTXM and never reads TILE, so protectors zero it. Copying MTXM over it gives the terrain brushes the ground back (doodads included, which TILE normally leaves out)."
           : "TILE is the ground without doodads, so the two differ under every doodad, and that is normal. Where they differ everywhere else, TILE was edited by another tool. Copying MTXM over it makes them agree; the doodads' own records stay.",
         repair: { kind: "write", index: lastIndex(file, "TILE"), bytes: mtxm.slice(0, tile.length) }, recommended: stripped,
+      });
+    }
+  }
+
+  /* ── What the map says ─────────────────────────────────── */
+
+  // The one finding about content rather than structure. 1.16.1 reset the text colour at
+  // every line break and Remastered carries it on, so a string coloured on one line draws
+  // the next in that colour too — in a map whose author never asked for it. Which of the
+  // two is right depends on when the map was written, and that is the one thing that
+  // cannot be read off the file, so this explains itself and never ticks itself.
+  const { strings, text } = input;
+  if (strings && text) {
+    const affected: number[] = [];
+    let lines = 0;
+    let carried = "";
+    for (const [index, entry] of strings.entries()) {
+      if (!entry) continue;
+      const bleeding = text.bleedingLines(entry);
+      if (bleeding.length === 0) continue;
+      affected.push(index);
+      lines += bleeding.length;
+      if (!carried) carried = bleeding[0].carried.label;
+    }
+    if (affected.length > 0) {
+      const one = affected.length === 1;
+      const example = snippet(strings[affected[0]] ?? "");
+      add({
+        id: "strings-bleed", level: "warn", section: "STR ",
+        title: `${fmt(affected.length)} string${one ? "" : "s"} draw${one ? "s" : ""} differently in Remastered than in 1.16.1`,
+        detail: `1.16.1 started every line in the default colour; Remastered carries the previous line's colour across the break, so ${fmt(lines)} line${lines === 1 ? "" : "s"} here ${lines === 1 ? "is" : "are"} drawn in a colour the map never set${carried ? ` (${carried} is the first one carried over)` : ""} — for example ${JSON.stringify(example)}. Writing the reset the old game supplied at the head of each of those lines makes both games draw the string alike, and changes nothing about what it says. Whether that is a repair depends on when the map was made: one written for Remastered may mean the colours it shows, so this is never ticked for you.`,
+        repair: { kind: "set-strings" }, recommended: false,
       });
     }
   }

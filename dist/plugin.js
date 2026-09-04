@@ -77,6 +77,19 @@ function combine(parts, mode, size) {
 var u16 = (b, at) => at + 2 <= b.length ? b[at] | b[at + 1] << 8 : null;
 var u32 = (b, at) => at + 4 <= b.length ? (b[at] | b[at + 1] << 8 | b[at + 2] << 16 | b[at + 3] << 24) >>> 0 : null;
 
+// colors.ts
+function snippet(text, max = 40) {
+  let out = "";
+  for (const ch of text) {
+    const b = ch.charCodeAt(0);
+    if (b === 10 || b === 13) out += "\u23CE";
+    else if (b < 32) continue;
+    else out += ch;
+    if (out.length >= max) return `${out.slice(0, max)}\u2026`;
+  }
+  return out;
+}
+
 // analyze.ts
 var MAP_VERSIONS = /* @__PURE__ */ new Set([59, 63, 205, 206]);
 var MAX_UNIT_ID = 227;
@@ -280,14 +293,14 @@ function analyze(input) {
   }
   const type = bytesOf("TYPE");
   if (type) {
-    const text = String.fromCharCode(...type.subarray(0, 4));
-    if (text !== "RAWS" && text !== "RAWB") {
+    const text2 = String.fromCharCode(...type.subarray(0, 4));
+    if (text2 !== "RAWS" && text2 !== "RAWB") {
       const wanted = version !== null && version >= 63 ? "RAWB" : "RAWS";
       add({
         id: "type",
         level: "info",
         section: "TYPE",
-        title: `TYPE is ${describeName(text)}, not RAWS or RAWB`,
+        title: `TYPE is ${describeName(text2)}, not RAWS or RAWB`,
         detail: `The game checks it against the version it is running. ${wanted} is what StarEdit writes for this file's VER.`,
         repair: { kind: "write", index: lastIndex(file, "TYPE"), bytes: new Uint8Array([...wanted].map((ch) => ch.charCodeAt(0))) },
         recommended: true
@@ -452,6 +465,33 @@ function analyze(input) {
       });
     }
   }
+  const { strings, text } = input;
+  if (strings && text) {
+    const affected = [];
+    let lines = 0;
+    let carried = "";
+    for (const [index, entry] of strings.entries()) {
+      if (!entry) continue;
+      const bleeding = text.bleedingLines(entry);
+      if (bleeding.length === 0) continue;
+      affected.push(index);
+      lines += bleeding.length;
+      if (!carried) carried = bleeding[0].carried.label;
+    }
+    if (affected.length > 0) {
+      const one = affected.length === 1;
+      const example = snippet(strings[affected[0]] ?? "");
+      add({
+        id: "strings-bleed",
+        level: "warn",
+        section: "STR ",
+        title: `${fmt(affected.length)} string${one ? "" : "s"} draw${one ? "s" : ""} differently in Remastered than in 1.16.1`,
+        detail: `1.16.1 started every line in the default colour; Remastered carries the previous line's colour across the break, so ${fmt(lines)} line${lines === 1 ? "" : "s"} here ${lines === 1 ? "is" : "are"} drawn in a colour the map never set${carried ? ` (${carried} is the first one carried over)` : ""} \u2014 for example ${JSON.stringify(example)}. Writing the reset the old game supplied at the head of each of those lines makes both games draw the string alike, and changes nothing about what it says. Whether that is a repair depends on when the map was made: one written for Remastered may mean the colours it shows, so this is never ticked for you.`,
+        repair: { kind: "set-strings" },
+        recommended: false
+      });
+    }
+  }
   const order = known.map((k) => k.name);
   const rank = (c) => {
     const i = order.indexOf(c.name);
@@ -514,6 +554,7 @@ function applyRepairs(input, repairs, ctx) {
   const skipped = [];
   const rebuild = /* @__PURE__ */ new Set();
   let rebuildIsom = false;
+  let setStrings = false;
   const spec = (name) => ctx.known.find((k) => k.name === name);
   const order = ctx.known.map((k) => k.name);
   const targets = repairs.map((r) => "index" in r ? at(r.index) : null);
@@ -616,6 +657,11 @@ function applyRepairs(input, repairs, ctx) {
       case "rebuild-isom":
         rebuildIsom = true;
         break;
+      // Not a byte-level repair: the strings are rewritten through the editor's model
+      // once the file below has been installed, so the fix survives it.
+      case "set-strings":
+        setStrings = true;
+        break;
     }
   });
   file.chunks = chunks.filter((c) => !removals.has(c));
@@ -638,7 +684,7 @@ function applyRepairs(input, repairs, ctx) {
     };
     file.chunks = file.chunks.map((c, i) => ({ c, i })).sort((a, b) => rank(a.c) - rank(b.c) || a.i - b.i).map(({ c }) => c);
   }
-  return { file, skipped, rebuild: [...rebuild], rebuildIsom };
+  return { file, skipped, rebuild: [...rebuild], rebuildIsom, setStrings };
 }
 function fit(data, size, fill) {
   const out = new Uint8Array(size).fill(fill);
@@ -753,7 +799,7 @@ var Session = class {
     } catch {
       isom = "unchecked";
     }
-    return analyze({ file, known, required, vcod, isom });
+    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text });
   }
   /* ── The dialog ─────────────────────────────────────────── */
   open() {
@@ -855,10 +901,27 @@ var Session = class {
     const done = [];
     try {
       const outcome = applyRepairs(parseChunks(sections.file()), chosen.map((f) => f.repair), { known: sections.known(), defaults: (n) => sections.defaults(n) });
-      const byteLevel = chosen.filter((f) => f.repair.kind !== "rebuild" && f.repair.kind !== "rebuild-isom");
+      const hostRepairs = /* @__PURE__ */ new Set(["rebuild", "rebuild-isom", "set-strings"]);
+      const byteLevel = chosen.filter((f) => !hostRepairs.has(f.repair.kind));
       if (byteLevel.length > 0) {
         const r = sections.replaceFile(serializeChunks(outcome.file));
         done.push(`${plural(byteLevel.length, "repair")} written to the file${r.warnings.length > 0 ? ` \u2014 the parser still says: ${r.warnings.join("; ")}` : ""}`);
+      }
+      if (outcome.setStrings) {
+        let fixed = 0;
+        let lines = 0;
+        const r = api.document.update("Fix string colours", (tx) => {
+          for (const [index, entry] of tx.strings.list().entries()) {
+            if (entry === null) continue;
+            const next = api.text.fixBleeding(entry);
+            if (next === entry) continue;
+            lines += api.text.bleedingLines(entry).length;
+            tx.strings.set(index, next);
+            fixed++;
+          }
+          tx.note(`${plural(fixed, "string")} given the line-break colour reset`);
+        });
+        done.push(fixed === 0 ? "the strings already read the same in both games" : `${plural(fixed, "string")} given the reset 1.16.1 supplied at ${plural(lines, "line break")}${r.changed ? "" : " (nothing changed)"}`);
       }
       if (outcome.rebuild.length > 0) {
         const r = sections.rebuild(outcome.rebuild);
