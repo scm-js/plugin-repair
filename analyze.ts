@@ -7,7 +7,7 @@
  * rewrites everything.
  */
 import { combine, named, parseChunks, readableName, u16, u32, type Chunk, type ChunkFile } from "./chk";
-import type { IsomReport, SectionKnowledge } from "./plugin-api/plugins/api";
+import type { IsomReport, SectionKnowledge } from "@scm-js/plugin-api";
 
 export type Level = "error" | "warn" | "info";
 

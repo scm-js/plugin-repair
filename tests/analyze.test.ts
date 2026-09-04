@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { analyze, describeName, recoverable, type AnalysisInput, type Finding } from "../analyze";
 import { chunk, parseChunks, serializeChunks, type ChunkFile } from "../chk";
-import type { SectionKnowledge } from "../plugin-api/plugins/api";
+import type { SectionKnowledge } from "@scm-js/plugin-api";
 
 /* A registry the shape the editor hands out, sized for a 4 × 2 map. */
 const W = 4, H = 2;

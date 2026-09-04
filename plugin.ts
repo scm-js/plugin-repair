@@ -11,10 +11,11 @@
  * `chk.ts` reads the container, `analyze.ts` turns a chunk list into findings and
  * `repair.ts` applies the byte-level ones — all pure, all tested; this file gathers the
  * inputs from the editor, shows the dialog and runs the two repairs that need the
- * editor's model (`api.document.sections.rebuild`, `tx.rebuildIsom`). `plugin-api/` is the
- * editor's emitted type declarations, vendored so the repository type-checks alone.
+ * editor's model (`api.document.sections.rebuild`, `tx.rebuildIsom`).
+ * `@scm-js/plugin-api` is the editor's type declarations, a devDependency generated from
+ * its own `src/plugins/api.ts`; the host erases the type-only import.
  */
-import type { DialogHandle, DocumentEvent, PluginApi } from "./plugin-api/plugins/api";
+import type { DialogHandle, DocumentEvent, PluginApi } from "@scm-js/plugin-api";
 import { analyze, describeName, type Analysis, type Finding, type IsomFacts, type Level } from "./analyze";
 import { parseChunks, readableName, serializeChunks } from "./chk";
 import { applyRepairs } from "./repair";

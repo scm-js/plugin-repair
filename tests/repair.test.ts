@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { analyze } from "../analyze";
 import { chunk, parseChunks, serializeChunks, type ChunkFile } from "../chk";
 import { applyRepairs, fit } from "../repair";
-import type { SectionKnowledge } from "../plugin-api/plugins/api";
+import type { SectionKnowledge } from "@scm-js/plugin-api";
 
 const K = (name: string, mode: SectionKnowledge["mode"], size: number | null, stride: number | null = null): SectionKnowledge => ({ name, what: name, mode, size, stride, modelled: true });
 const KNOWN: SectionKnowledge[] = [

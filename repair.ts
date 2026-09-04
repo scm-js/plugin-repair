@@ -7,7 +7,7 @@
  */
 import { chunk, combine, named, parseChunks, readableName, type Chunk, type ChunkFile } from "./chk";
 import type { Repair } from "./analyze";
-import type { SectionKnowledge } from "./plugin-api/plugins/api";
+import type { SectionKnowledge } from "@scm-js/plugin-api";
 
 export interface RepairContext {
   known: SectionKnowledge[];

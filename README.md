@@ -112,9 +112,9 @@ dialog, and applies a repair in three steps: the byte-level ones as one
 `api.document.sections.replaceFile`, then `sections.rebuild` for the string table, then
 one `api.document.edit` with `tx.rebuildIsom`.
 
-`plugin-api/` is the editor's emitted type declarations, vendored so the repository
-type-checks alone (`npm run typecheck`); refresh it from `npm run build:plugin-types` in
-the editor when the API changes.
+Types come from [`@scm-js/plugin-api`](https://github.com/scm-js/plugin-api), a devDependency
+generated from the editor's own `src/plugins/api.ts`; `npm update @scm-js/plugin-api` takes the
+newest contract.
 
 ## License
 
