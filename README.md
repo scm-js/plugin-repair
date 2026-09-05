@@ -40,6 +40,8 @@ worth knowing, harmless), the section it is about, and what was found. The line 
 says what the game does with the file as it is and what the repair changes. The tick is
 the repair; recommended ones start ticked. **Recommended** / **All** / **None** set the
 ticks, **Repair** applies the ticked ones, and the list is checked again straight after.
+Nothing is ticked again for you after a press: anything still listed is there for you to
+read, and a finding that came back from the repair you just ran says so under its line.
 
 A repair rewrites the file and hands it back to the editor, which parses it afresh: every
 view follows, and the undo history is cleared, as it is after Section Explorer and
@@ -91,7 +93,11 @@ The editor's own:
 - no ISOM, or one the wrong size — rebuild the lattice from the tiles (exact for terrain
   laid down isometrically, a best guess under doodads and for hand-placed tiles), one
   undo step;
-- an ISOM out of step with the tiles after Rect or Tile edits — rebuild it;
+- an ISOM out of step with the tiles after Rect or Tile edits — rebuild it. What is
+  offered is the share a rebuild would put back, never the raw disagreement: a rebuild
+  converges in one pass, and terrain no diamond lattice describes — hand-placed tiles,
+  blends, ground another editor laid — disagrees with any lattice for ever. That part is
+  reported as a note with no repair, so the finding cannot survive its own press;
 - a TILE that is all zeros — copy MTXM over it; one that merely differs from MTXM is a
   note, since the two differ under every doodad by design;
 - sections out of StarEdit's order — reorder, unticked.

@@ -126,7 +126,7 @@ describe("applyRepairs", () => {
       trailing: null,
     };
     const required = ["VER ", "VCOD", "OWNR", "ERA ", "DIM ", "SIDE", "MTXM", "UNIT", "THG2", "STR ", "MRGN", "TRIG", "SPRP", "FORC"];
-    const isom = { present: true, report: { rects: 8, mismatched: 0, stale: false } };
+    const isom = { present: true, report: { rects: 8, mismatched: 0, inherent: 0, stale: false } };
     const vcod = new Uint8Array(1040).fill(1);
     expect(analyze({ file: good, known: KNOWN, required, vcod, isom }).findings).toEqual([]);
 

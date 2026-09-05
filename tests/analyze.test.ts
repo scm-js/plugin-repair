@@ -46,7 +46,10 @@ function goodFile(): ChunkFile {
     trailing: null,
   };
 }
-const input = (file: ChunkFile, extra: Partial<AnalysisInput> = {}): AnalysisInput => ({ file, known: KNOWN, required: REQUIRED, vcod: VCOD, isom: { present: true, report: { rects: 8, mismatched: 0, stale: false } }, ...extra });
+/** An ISOM report: `mismatched` of `rects` disagree, `inherent` of those a rebuild would leave. */
+const isomReport = (rects: number, mismatched: number, inherent: number) =>
+  ({ present: true, report: { rects, mismatched, inherent, stale: (mismatched - inherent) / rects > 0.02 } }) as const;
+const input = (file: ChunkFile, extra: Partial<AnalysisInput> = {}): AnalysisInput => ({ file, known: KNOWN, required: REQUIRED, vcod: VCOD, isom: isomReport(8, 0, 0), ...extra });
 const ids = (findings: Finding[]) => findings.map((f) => f.id);
 const byId = (findings: Finding[], id: string) => findings.find((f) => f.id === id)!;
 const at = (file: ChunkFile, name: string) => file.chunks.findIndex((c) => c.name === name);
@@ -281,9 +284,25 @@ describe("ISOM and TILE", () => {
     const f = byId(analyze(input(wrong, { isom: { present: false, report: null } })).findings, "isom");
     expect(f.title).toBe("ISOM is 10 bytes; a 72-byte lattice fits this map");
     expect(ids(analyze(input(wrong, { isom: "unchecked" })).findings)).not.toContain("isom");
-    const stale = byId(analyze(input(goodFile(), { isom: { present: true, report: { rects: 100, mismatched: 30, stale: true } } })).findings, "isom-stale");
+    const stale = byId(analyze(input(goodFile(), { isom: isomReport(100, 30, 6) })).findings, "isom-stale");
     expect(stale).toMatchObject({ level: "warn", repair: { kind: "rebuild-isom" }, recommended: true });
-    expect(stale.title).toContain("30%");
+    // The offer is what a rebuild recovers, not the raw disagreement, and it says what it leaves.
+    expect(stale.title).toContain("24%");
+    expect(stale.detail).toContain("6%");
+  });
+
+  it("does not offer a rebuild for terrain no lattice can describe", () => {
+    // A rebuild converges in one pass; whatever still disagrees afterwards is hand-placed
+    // tiles, blends or another editor's ground. Offering the repair on the raw number left
+    // a warning that came back ticked after every press and could never be cleared.
+    const findings = analyze(input(goodFile(), { isom: isomReport(100, 14, 14) })).findings;
+    expect(ids(findings)).not.toContain("isom-stale");
+    const note = byId(findings, "isom-inherent");
+    expect(note).toMatchObject({ level: "info", repair: null, recommended: false });
+    expect(note.title).toContain("14%");
+    // Nothing at all to say when the lattice fits, or when the leftover rounds to nothing.
+    expect(ids(analyze(input(goodFile(), { isom: isomReport(100, 0, 0) })).findings)).not.toContain("isom-inherent");
+    expect(ids(analyze(input(goodFile(), { isom: isomReport(1000, 4, 4) })).findings)).not.toContain("isom-inherent");
   });
 
   it("tells a zeroed TILE from one that merely differs under doodads", () => {

@@ -428,18 +428,32 @@ function analyze(input) {
       repair: { kind: "rebuild-isom" },
       recommended: true
     });
-  } else if (input.isom.report?.stale) {
+  } else if (input.isom.report) {
     const r = input.isom.report;
-    const pct = Math.round(100 * r.mismatched / Math.max(1, r.rects));
-    add({
-      id: "isom-stale",
-      level: "warn",
-      section: "ISOM",
-      title: `ISOM disagrees with the tiles under about ${pct}% of the map`,
-      detail: "Terrain edited with the Rect or Tile brush, or by another tool, left the lattice behind; isometric strokes near there will not join up. Rebuilding it from the tiles brings it back in step. One undo step.",
-      repair: { kind: "rebuild-isom" },
-      recommended: true
-    });
+    const share = (n) => Math.round(100 * n / Math.max(1, r.rects));
+    const recover = share(r.mismatched - r.inherent);
+    const leftover = share(r.inherent);
+    if (r.stale) {
+      add({
+        id: "isom-stale",
+        level: "warn",
+        section: "ISOM",
+        title: `ISOM is behind the tiles under about ${recover}% of the map`,
+        detail: `Terrain edited with the Rect or Tile brush, or by another tool, left the lattice behind; isometric strokes near there will not join up. Rebuilding it from the tiles brings that ${recover}% back in step${leftover >= 1 ? `, and leaves about ${leftover}% that no diamond lattice describes` : ""}. One undo step.`,
+        repair: { kind: "rebuild-isom" },
+        recommended: true
+      });
+    } else if (leftover >= 1) {
+      add({
+        id: "isom-inherent",
+        level: "info",
+        section: "ISOM",
+        title: `About ${leftover}% of the map is terrain no diamond lattice describes`,
+        detail: "Hand-placed tiles, blends, or ground another editor laid. The lattice is already as close to the tiles as a rebuild can bring it, so there is nothing to repair; the isometric brush will not join up in those places, and the Rect, Tile and Blend brushes work as usual.",
+        repair: null,
+        recommended: false
+      });
+    }
   }
   const mtxm = bytesOf("MTXM");
   const tile = bytesOf("TILE");
@@ -720,6 +734,7 @@ var STYLE = `
 .rp .rp-badge.info { color: var(--text-dim, #99a2b3); border-color: var(--border, #333); }
 .rp .rp-sec { flex: none; width: 40px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--gold, #e6b95c); white-space: pre; }
 .rp .rp-detail { margin-left: 114px; color: var(--text-dim, #99a2b3); line-height: 1.4; }
+.rp .rp-again { margin-left: 114px; color: #ffcf7a; line-height: 1.4; }
 .rp .rp-none { padding: 12px 8px; color: var(--text-faint, #6b7382); }
 .rp .rp-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .rp .rp-actions .rp-grow { flex: 1; }
@@ -731,6 +746,8 @@ var Session = class {
   body = null;
   analysis = null;
   ticks = /* @__PURE__ */ new Map();
+  /** Findings the last press tried to repair, so one that comes back is shown as having survived it. */
+  attempted = /* @__PURE__ */ new Set();
   original = null;
   repaired = false;
   log = [];
@@ -751,6 +768,7 @@ var Session = class {
     this.repaired = false;
     this.log = [];
     this.ticks.clear();
+    this.attempted.clear();
     this.handle?.close();
     if (e.reason !== "open") return;
     this.original = { fileName: e.fileName, bytes: this.api.document.sections.file() };
@@ -850,7 +868,9 @@ var Session = class {
         el("span", { className: "rp-sec", title: f.section ? readableName(f.section) ? api.document.sections.spec(f.section)?.what ?? "" : describeName(f.section) : "the file" }, f.section ? readableName(f.section) ? f.section : "????" : "file"),
         tick
       );
-      list.append(el("div", { className: "rp-item" }, row, el("div", { className: "rp-detail" }, f.detail)));
+      const item = el("div", { className: "rp-item" }, row, el("div", { className: "rp-detail" }, f.detail));
+      if (this.attempted.has(f.id)) item.append(el("div", { className: "rp-again" }, "Still reported after the last repair."));
+      list.append(item);
     }
     root.append(list);
     const repairable = findings.filter((f) => f.repair);
@@ -946,16 +966,20 @@ var Session = class {
         api.document.edit("Rebuild ISOM", (tx) => {
           const r = tx.rebuildIsom();
           if (!r) return;
-          note = r.created ? `ISOM rebuilt from the tiles \u2014 ${plural(r.diamonds, "diamond")}${r.unresolved > 0 ? `, ${r.unresolved} guessed under doodads or off the edge` : ""}` : r.changed > 0 ? `ISOM brought back in step \u2014 ${plural(r.changed, "lattice value")} changed` : "the ISOM already matched the tiles";
+          note = r.created ? `ISOM rebuilt from the tiles \u2014 ${plural(r.diamonds, "diamond")}${r.unresolved > 0 ? `, ${r.unresolved} guessed under doodads or off the edge` : ""}` : r.changed > 0 ? `ISOM brought back in step \u2014 ${plural(r.changed, "lattice value")} changed` : "the lattice was already the closest fit the tiles allow";
         });
         done.push(note);
       }
       for (const s of outcome.skipped) done.push(`skipped: ${s}`);
       this.repaired = true;
       this.ticks.clear();
+      this.attempted = new Set(chosen.map((f) => f.id));
       api.ui.status(`Repair: ${done.join("; ")}.`);
       this.log = [`Done: ${done.join("; ")}.`];
-      if (generation === this.generation) this.analysis = await this.gather();
+      if (generation === this.generation) {
+        this.analysis = await this.gather();
+        for (const f of this.analysis.findings) this.ticks.set(f.id, false);
+      }
     } catch (err) {
       this.log = [`Repair failed: ${err instanceof Error ? err.message : String(err)}`];
       api.ui.status(this.log[0]);
@@ -976,6 +1000,7 @@ var Session = class {
       api.document.sections.replaceFile(this.original.bytes);
       this.repaired = false;
       this.ticks.clear();
+      this.attempted.clear();
       this.log = ["The file is back as it was when it opened."];
       api.ui.status(`Repair: ${this.name()} restored to the file that was opened.`);
       if (generation === this.generation) this.analysis = await this.gather();

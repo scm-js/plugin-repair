@@ -393,15 +393,30 @@ export function analyze(input: AnalysisInput): Analysis {
       detail: "The game never reads ISOM; it is the editor's record of the terrain lattice, and protectors strip it. Rebuilding it from the tiles is exact for terrain laid down isometrically and a best guess under doodads and for hand-placed tiles. One undo step.",
       repair: { kind: "rebuild-isom" }, recommended: true,
     });
-  } else if (input.isom.report?.stale) {
+  } else if (input.isom.report) {
+    // `stale` is what a rebuild would *recover*, not the raw disagreement: a rebuild
+    // converges in one pass and leaves `inherent` behind for good, so offering the
+    // repair on the raw number left a finding that came back at full strength after
+    // every press, ticked, on any map with hand-laid terrain.
     const r = input.isom.report;
-    const pct = Math.round((100 * r.mismatched) / Math.max(1, r.rects));
-    add({
-      id: "isom-stale", level: "warn", section: "ISOM",
-      title: `ISOM disagrees with the tiles under about ${pct}% of the map`,
-      detail: "Terrain edited with the Rect or Tile brush, or by another tool, left the lattice behind; isometric strokes near there will not join up. Rebuilding it from the tiles brings it back in step. One undo step.",
-      repair: { kind: "rebuild-isom" }, recommended: true,
-    });
+    const share = (n: number) => Math.round((100 * n) / Math.max(1, r.rects));
+    const recover = share(r.mismatched - r.inherent);
+    const leftover = share(r.inherent);
+    if (r.stale) {
+      add({
+        id: "isom-stale", level: "warn", section: "ISOM",
+        title: `ISOM is behind the tiles under about ${recover}% of the map`,
+        detail: `Terrain edited with the Rect or Tile brush, or by another tool, left the lattice behind; isometric strokes near there will not join up. Rebuilding it from the tiles brings that ${recover}% back in step${leftover >= 1 ? `, and leaves about ${leftover}% that no diamond lattice describes` : ""}. One undo step.`,
+        repair: { kind: "rebuild-isom" }, recommended: true,
+      });
+    } else if (leftover >= 1) {
+      add({
+        id: "isom-inherent", level: "info", section: "ISOM",
+        title: `About ${leftover}% of the map is terrain no diamond lattice describes`,
+        detail: "Hand-placed tiles, blends, or ground another editor laid. The lattice is already as close to the tiles as a rebuild can bring it, so there is nothing to repair; the isometric brush will not join up in those places, and the Rect, Tile and Blend brushes work as usual.",
+        repair: null, recommended: false,
+      });
+    }
   }
 
   /* ── TILE against MTXM ─────────────────────────────────── */

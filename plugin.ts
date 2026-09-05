@@ -47,6 +47,7 @@ const STYLE = `
 .rp .rp-badge.info { color: var(--text-dim, #99a2b3); border-color: var(--border, #333); }
 .rp .rp-sec { flex: none; width: 40px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--gold, #e6b95c); white-space: pre; }
 .rp .rp-detail { margin-left: 114px; color: var(--text-dim, #99a2b3); line-height: 1.4; }
+.rp .rp-again { margin-left: 114px; color: #ffcf7a; line-height: 1.4; }
 .rp .rp-none { padding: 12px 8px; color: var(--text-faint, #6b7382); }
 .rp .rp-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .rp .rp-actions .rp-grow { flex: 1; }
@@ -59,6 +60,8 @@ class Session {
   private body: HTMLElement | null = null;
   private analysis: Analysis | null = null;
   private ticks = new Map<string, boolean>();
+  /** Findings the last press tried to repair, so one that comes back is shown as having survived it. */
+  private attempted = new Set<string>();
   private original: { fileName: string | null; bytes: Uint8Array } | null = null;
   private repaired = false;
   private log: string[] = [];
@@ -79,6 +82,7 @@ class Session {
     this.repaired = false;
     this.log = [];
     this.ticks.clear();
+    this.attempted.clear();
     // Whatever dialog was up was about the map that just went.
     this.handle?.close();
     if (e.reason !== "open") return;
@@ -179,7 +183,9 @@ class Session {
         el("span", { className: "rp-sec", title: f.section ? (readableName(f.section) ? api.document.sections.spec(f.section)?.what ?? "" : describeName(f.section)) : "the file" }, f.section ? (readableName(f.section) ? f.section : "????") : "file"),
         tick,
       );
-      list.append(el("div", { className: "rp-item" }, row, el("div", { className: "rp-detail" }, f.detail)));
+      const item = el("div", { className: "rp-item" }, row, el("div", { className: "rp-detail" }, f.detail));
+      if (this.attempted.has(f.id)) item.append(el("div", { className: "rp-again" }, "Still reported after the last repair."));
+      list.append(item);
     }
     root.append(list);
 
@@ -282,17 +288,23 @@ class Session {
           if (!r) return;
           note = r.created
             ? `ISOM rebuilt from the tiles — ${plural(r.diamonds, "diamond")}${r.unresolved > 0 ? `, ${r.unresolved} guessed under doodads or off the edge` : ""}`
-            : r.changed > 0 ? `ISOM brought back in step — ${plural(r.changed, "lattice value")} changed` : "the ISOM already matched the tiles";
+            : r.changed > 0 ? `ISOM brought back in step — ${plural(r.changed, "lattice value")} changed` : "the lattice was already the closest fit the tiles allow";
         });
         done.push(note);
       }
       for (const s of outcome.skipped) done.push(`skipped: ${s}`);
       this.repaired = true;
       // The event listener sees a "replace" and leaves the original alone; a fresh look shows what is left.
+      // Nothing is re-armed: a finding that survives its own repair used to come back ticked with the
+      // button live, which is a press that can only do nothing. Ticking again is the user's to do.
       this.ticks.clear();
+      this.attempted = new Set(chosen.map((f) => f.id));
       api.ui.status(`Repair: ${done.join("; ")}.`);
       this.log = [`Done: ${done.join("; ")}.`];
-      if (generation === this.generation) this.analysis = await this.gather();
+      if (generation === this.generation) {
+        this.analysis = await this.gather();
+        for (const f of this.analysis.findings) this.ticks.set(f.id, false);
+      }
     } catch (err) {
       this.log = [`Repair failed: ${err instanceof Error ? err.message : String(err)}`];
       api.ui.status(this.log[0]);
@@ -314,6 +326,7 @@ class Session {
       api.document.sections.replaceFile(this.original.bytes);
       this.repaired = false;
       this.ticks.clear();
+      this.attempted.clear();
       this.log = ["The file is back as it was when it opened."];
       api.ui.status(`Repair: ${this.name()} restored to the file that was opened.`);
       if (generation === this.generation) this.analysis = await this.gather();
