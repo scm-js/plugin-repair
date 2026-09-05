@@ -15,7 +15,7 @@
  * `@scm-js/plugin-api` is the editor's type declarations, a devDependency generated from
  * its own `src/plugins/api.ts`; the host erases the type-only import.
  */
-import type { DialogHandle, DocumentEvent, PluginApi } from "@scm-js/plugin-api";
+import type { ButtonElement, DialogHandle, DocumentEvent, PluginApi } from "@scm-js/plugin-api";
 import { analyze, describeName, type Analysis, type Finding, type IsomFacts, type Level } from "./analyze";
 import { parseChunks, readableName, serializeChunks } from "./chk";
 import { applyRepairs } from "./repair";
@@ -97,6 +97,8 @@ class Session {
     this.original ??= { fileName: api.document.info()?.fileName ?? null, bytes: api.document.sections.file() };
     const generation = this.generation;
     this.busy = true;
+    // A manual check with the dialog up: the footer says so and holds its buttons meanwhile.
+    if (this.handle?.isOpen()) this.handle.setBusy("Checking the map…");
     try {
       const analysis = await this.gather();
       if (generation !== this.generation) return;
@@ -109,6 +111,7 @@ class Session {
       if (this.handle?.isOpen()) this.render(); else this.open();
     } finally {
       this.busy = false;
+      this.handle?.setBusy(false);
     }
   }
 
@@ -169,7 +172,7 @@ class Session {
         value: f.repair ? (this.ticks.get(f.id) ?? f.recommended) : false,
         disabled: !f.repair,
         title: f.repair ? (f.recommended ? "Recommended" : "Optional — read the note first") : "Nothing the plugin can do about this one",
-        onChange: (v) => { this.ticks.set(f.id, v); this.updateRepairButton(); },
+        onChange: (v) => { this.ticks.set(f.id, v); this.relabelRepairButton(); },
       });
       const row = el("div", { className: "rp-row" },
         el("span", { className: `rp-badge ${f.level}`, title: LEVEL_LABEL[f.level] }, LEVEL_LABEL[f.level]),
@@ -182,7 +185,8 @@ class Session {
 
     const repairable = findings.filter((f) => f.repair);
     const setAll = (pick: (f: Finding) => boolean) => { for (const f of repairable) this.ticks.set(f.id, pick(f)); this.render(); };
-    this.repairButton = widgets.button("Repair", { primary: true, onClick: () => { void this.repair(); } });
+    const chosen = this.selected().length;
+    this.repairButton = widgets.button(chosen === 0 ? "Repair" : `Repair ${chosen} selected`, { primary: true, onClick: () => { void this.repair(); } });
     const actions = el("div", { className: "rp-actions" },
       widgets.button("Recommended", { ghost: true, disabled: repairable.length === 0, title: "Tick the repairs that only write what the game already does, or restore what the editor needs", onClick: () => setAll((f) => f.recommended) }),
       widgets.button("All", { ghost: true, disabled: repairable.length === 0, onClick: () => setAll(() => true) }),
@@ -205,12 +209,23 @@ class Session {
     body.append(root);
   }
 
-  private repairButton: HTMLButtonElement | null = null;
+  private repairButton: ButtonElement | null = null;
+
+  /** The count in the button's label follows the ticks; the ring, when there is one, is a child node before the text. */
+  private relabelRepairButton() {
+    if (!this.repairButton) return;
+    const n = this.selected().length;
+    const text = n === 0 ? "Repair" : `Repair ${n} selected`;
+    const last = this.repairButton.lastChild;
+    if (last && last.nodeType === Node.TEXT_NODE) last.textContent = text; else this.repairButton.append(text);
+    this.updateRepairButton();
+  }
 
   private updateRepairButton() {
     const n = this.selected().length;
     if (!this.repairButton) return;
-    this.repairButton.textContent = n === 0 ? "Repair" : `Repair ${n} selected`;
+    // `setBusy` puts the ring in front of the label and takes it away again; the label is set after, since the ring goes inside the button.
+    this.repairButton.setBusy(this.busy);
     this.repairButton.disabled = n === 0 || this.busy;
   }
 
@@ -224,6 +239,7 @@ class Session {
     const generation = this.generation;
     this.busy = true;
     this.updateRepairButton();
+    this.handle?.setBusy("Repairing…");
     const done: string[] = [];
     try {
       const outcome = applyRepairs(parseChunks(sections.file()), chosen.map((f) => f.repair!), { known: sections.known(), defaults: (n) => sections.defaults(n) });
@@ -282,6 +298,7 @@ class Session {
       api.ui.status(this.log[0]);
     } finally {
       this.busy = false;
+      this.handle?.setBusy(false);
       if (generation === this.generation) this.render();
     }
   }
@@ -291,6 +308,8 @@ class Session {
     if (!this.original || this.busy || !api.document.isOpen()) return;
     const generation = this.generation;
     this.busy = true;
+    this.updateRepairButton();
+    this.handle?.setBusy("Restoring the original…");
     try {
       api.document.sections.replaceFile(this.original.bytes);
       this.repaired = false;
@@ -300,6 +319,7 @@ class Session {
       if (generation === this.generation) this.analysis = await this.gather();
     } finally {
       this.busy = false;
+      this.handle?.setBusy(false);
       if (generation === this.generation) this.render();
     }
   }
