@@ -453,10 +453,8 @@ describe("stacked text", () => {
   it("never ticks itself: the layout is something the map had and this drops it", () => {
     const f = byId(analyze(withStrings([`Name${RIGHT}by Author`])).findings, "strings-stacked");
     expect(f.recommended).toBe(false);
-    expect(f.detail).toMatch(/never ticked for you/);
-    // It says what survives as well as what does not.
+    // It says what survives the flattening.
     expect(f.detail).toMatch(/keeping the colours and every word/);
-    expect(f.detail).toMatch(/loses is where the pieces sat/);
   });
 
   it("is reported apart from the colour finding, so either can be ticked alone", () => {

@@ -525,7 +525,7 @@ function analyze(input) {
         level: "warn",
         section: "STR ",
         title: `${fmt(affected.length)} string${one ? "" : "s"} stack${one ? "s" : ""} text on one line${where ? ` (${where})` : ""}`,
-        detail: `0x12 and 0x13 move the text after them to the right or the centre of the line they are on, and 1.16.1 obeyed every one of them, so ${fmt(lines)} line${lines === 1 ? " here is" : "s here are"} drawn in two or more places at once. Remastered does not draw them that way, and neither does the editor, which takes one alignment for the whole line \u2014 the last the line sets \u2014 so every piece before it lands somewhere its author did not choose. Flattening drops the codes that split each line and joins its pieces left to right in the order they are written, keeping the colours and every word: the first would read ${JSON.stringify(flat)}. What it loses is where the pieces sat, which is the layout the map was drawn for \u2014 so this is never ticked for you.`,
+        detail: `0x12 and 0x13 move the text after them to the right or the centre of the line they are on, which rendered properly in 1.16.1, so ${fmt(lines)} line${lines === 1 ? " here is" : "s here are"} drawn in two or more places at once. Remastered does not draw them that way, and neither does this editor. Flattening drops the codes that split each line and joins its pieces left to right in the order they are written, keeping the colours and every word: the first would read ${JSON.stringify(flat)}.`,
         repair: { kind: "set-strings", change: "stacks" },
         recommended: false
       });
