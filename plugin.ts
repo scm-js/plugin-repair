@@ -10,8 +10,9 @@
  *
  * `chk.ts` reads the container, `analyze.ts` turns a chunk list into findings and
  * `repair.ts` applies the byte-level ones — all pure, all tested; this file gathers the
- * inputs from the editor, shows the dialog and runs the two repairs that need the
- * editor's model (`api.document.sections.rebuild`, `tx.rebuildIsom`).
+ * inputs from the editor, shows the dialog and runs the repairs that need the editor's
+ * model (the two string rewrites through `document.update`, then
+ * `api.document.sections.rebuild` and `tx.rebuildIsom`).
  * `@scm-js/plugin-api` is the editor's type declarations, a devDependency generated from
  * its own `src/plugins/api.ts`; the host erases the type-only import.
  */
@@ -134,7 +135,7 @@ class Session {
     } catch {
       isom = "unchecked";
     }
-    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text });
+    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage() });
   }
 
   /* ── The dialog ─────────────────────────────────────────── */
@@ -237,6 +238,28 @@ class Session {
 
   /* ── Doing it ───────────────────────────────────────────── */
 
+  /**
+   * One of the two string repairs, through the editor's model so it stays undoable and STR
+   * is marked dirty. `rewrite` is `api.text`'s own rewriter and `measure` says how much of
+   * a string it acted on, for the note and the line in the report.
+   */
+  private rewriteStrings(label: string, rewrite: (s: string) => string, measure: (s: string) => number, note: (strings: number) => string) {
+    let strings = 0;
+    let units = 0;
+    const r = this.api.document.update(label, (tx) => {
+      for (const [index, entry] of tx.strings.list().entries()) {
+        if (entry === null) continue;
+        const next = rewrite(entry);
+        if (next === entry) continue;
+        units += measure(entry);
+        tx.strings.set(index, next);
+        strings++;
+      }
+      tx.note(note(strings));
+    });
+    return { strings, units, changed: r.changed };
+  }
+
   private async repair() {
     const { api } = this;
     const chosen = this.selected();
@@ -255,27 +278,32 @@ class Session {
         const r = sections.replaceFile(serializeChunks(outcome.file));
         done.push(`${plural(byteLevel.length, "repair")} written to the file${r.warnings.length > 0 ? ` — the parser still says: ${r.warnings.join("; ")}` : ""}`);
       }
-      // After `replaceFile`, which installs a whole new scenario and would drop this, and
-      // before `rebuild`, which re-encodes STR from the model this writes into. The strings
+      // After `replaceFile`, which installs a whole new scenario and would drop these, and
+      // before `rebuild`, which re-encodes STR from the model they write into. The strings
       // are read again here rather than carried in the repair, since the byte-level pass
-      // above may have moved them.
-      if (outcome.setStrings) {
-        let fixed = 0;
-        let lines = 0;
-        const r = api.document.update("Fix string colours", (tx) => {
-          for (const [index, entry] of tx.strings.list().entries()) {
-            if (entry === null) continue;
-            const next = api.text.fixBleeding(entry);
-            if (next === entry) continue;
-            lines += api.text.bleedingLines(entry).length;
-            tx.strings.set(index, next);
-            fixed++;
-          }
-          tx.note(`${plural(fixed, "string")} given the line-break colour reset`);
-        });
-        done.push(fixed === 0
+      // above may have moved them. Each is its own `update`, so the user can undo the one
+      // they regret without losing the other.
+      if (outcome.setStrings.includes("colours")) {
+        const { strings, units, changed } = this.rewriteStrings(
+          "Fix string colours",
+          (s) => api.text.fixBleeding(s),
+          (s) => api.text.bleedingLines(s).length,
+          (n) => `${plural(n, "string")} given the line-break colour reset`,
+        );
+        done.push(strings === 0
           ? "the strings already read the same in both games"
-          : `${plural(fixed, "string")} given the reset 1.16.1 supplied at ${plural(lines, "line break")}${r.changed ? "" : " (nothing changed)"}`);
+          : `${plural(strings, "string")} given the reset 1.16.1 supplied at ${plural(units, "line break")}${changed ? "" : " (nothing changed)"}`);
+      }
+      if (outcome.setStrings.includes("stacks")) {
+        const { strings, units, changed } = this.rewriteStrings(
+          "Flatten stacked text",
+          (s) => api.text.flattenStacks(s),
+          (s) => api.text.stackedLines(s).length,
+          (n) => `${plural(n, "string")} laid out on one line`,
+        );
+        done.push(strings === 0
+          ? "no string stacked text on a line"
+          : `${plural(strings, "string")} unstacked — ${plural(units, "line")} laid out left to right${changed ? "" : " (nothing changed)"}`);
       }
       if (outcome.rebuild.length > 0) {
         const r = sections.rebuild(outcome.rebuild);

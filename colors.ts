@@ -1,19 +1,25 @@
 /**
- * Presentation helpers for the string finding. The knowledge itself — which control bytes
- * set a colour, and what 1.16.1's per-line reset means for a string Remastered draws
- * differently — lives in the editor and reaches the plugin as `api.text`
- * (`TextApi.bleedingLines` / `.fixBleeding`); `analyze.ts` takes those two functions as
+ * Presentation helpers for the two string findings. The knowledge itself — which control
+ * bytes set a colour, what 1.16.1's per-line reset means for a string Remastered draws
+ * differently, and which lines the old game stacked at more than one alignment — lives in
+ * the editor and reaches the plugin as `api.text` (`TextApi.bleedingLines` / `.fixBleeding`,
+ * `.stackedLines` / `.flattenStacks`); `analyze.ts` takes those four functions as
  * `TextHelpers` so it stays pure and testable over data.
  *
  * This file used to carry its own copy of the byte classification. It does not any more:
  * the numbering is easy to get wrong — the editor's own table was, from 0x12 up, until it
  * was checked against the classic player palette — and one copy is enough to get wrong.
+ * The stacked-text pair went into the editor for the same reason and not into this file:
+ * where 0x12 and 0x13 place the text after them is the editor's table's business, and
+ * every plugin that shows or rewrites map text wants the same answer.
  */
 
-/** The two things `analyze` needs from `api.text`, named so a test can pass its own. */
+/** What `analyze` needs from `api.text`, named so a test can pass its own. */
 export interface TextHelpers {
   bleedingLines(text: string): { line: number; carried: { code: string; label: string } }[];
   fixBleeding(text: string): string;
+  stackedLines(text: string): { line: number; pieces: number }[];
+  flattenStacks(text: string): string;
 }
 
 /** A short, single-line look at a string, for a finding that quotes one. */

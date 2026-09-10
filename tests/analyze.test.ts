@@ -335,14 +335,16 @@ describe("order and sorting", () => {
   });
 });
 
-describe("string colours", () => {
-  /**
-   * A stand-in for `api.text`, so this stays a test of the finding rather than of the
-   * editor's colour table: a line "bleeds" when a previous line set a colour and it did
-   * not set one of its own, and fixing it writes the reset at the head of that line.
-   */
-  const RESET = "\x02";
-  const helpers = {
+/**
+ * A stand-in for `api.text`, so these stay tests of the findings rather than of the
+ * editor's own table (which `scm-js`'s `tests/text-colors.test.ts` covers). A line
+ * "bleeds" when a previous line set a colour and it did not set one of its own, and
+ * fixing it writes the reset at the head of that line; a line is "stacked" when an
+ * alignment code splits it into more than one piece with something drawn in each.
+ */
+const RESET = "\x02";
+const RIGHT = "\x12", CENTRE = "\x13";
+const helpers = {
     bleedingLines(s: string) {
       const out: { line: number; carried: { code: string; label: string } }[] = [];
       let carried: string | null = null;
@@ -360,9 +362,23 @@ describe("string colours", () => {
       for (const { line } of helpers.bleedingLines(s)) lines[line] = RESET + lines[line];
       return lines.join("\n");
     },
+    stackedLines(s: string) {
+      const out: { line: number; pieces: number }[] = [];
+      s.split("\n").forEach((line, i) => {
+        const drawn = line.split(/[\x12\x13]/).filter((p) => p.replace(/[\x01-\x1f]/g, "").trim() !== "");
+        if (drawn.length > 1) out.push({ line: i, pieces: drawn.length });
+      });
+      return out;
+    },
+    flattenStacks(s: string) {
+      return s.split("\n")
+        .map((line) => (helpers.stackedLines(line).length > 0 ? line.split(/[\x12\x13]/).filter((p) => p !== "").join(" ") : line))
+        .join("\n");
+    },
   };
-  const withStrings = (list: string[]) => input(goodFile(), { strings: list, text: helpers });
+const withStrings = (list: string[], extra: Partial<AnalysisInput> = {}) => input(goodFile(), { strings: list, text: helpers, ...extra });
 
+describe("string colours", () => {
   it("is silent when no line inherits a colour, and when the readers are not there", () => {
     expect(ids(analyze(withStrings(["plain", "\x06red on one line"])).findings)).not.toContain("strings-bleed");
     // No `strings`/`text` at all is the state before the map is open, not a clean bill.
@@ -378,7 +394,7 @@ describe("string colours", () => {
     // Two strings, three lines between them — and a blank slot is not one of them.
     expect(f.title).toContain("2 strings");
     expect(f.detail).toContain("3 lines");
-    expect(f.repair).toEqual({ kind: "set-strings" });
+    expect(f.repair).toEqual({ kind: "set-strings", change: "colours" });
   });
 
   it("never ticks itself: which game the map was made for is the one thing it cannot know", () => {
@@ -396,5 +412,56 @@ describe("string colours", () => {
     expect(f.detail).toContain('"Briefing⏎continues⏎here"');
     expect(f.detail).not.toContain("\x06");
     expect(f.detail).not.toContain("\n");
+  });
+});
+
+describe("stacked text", () => {
+  it("is silent when no line stacks, and when the readers are not there", () => {
+    // A code at the head places the whole line; it is not a stack.
+    expect(ids(analyze(withStrings([`${CENTRE}Centred name`, "plain"])).findings)).not.toContain("strings-stacked");
+    expect(ids(analyze(input(goodFile())).findings)).not.toContain("strings-stacked");
+  });
+
+  it("reports the strings the old game drew in more than one place at once", () => {
+    const a = analyze(withStrings([null as unknown as string, `Name${RIGHT}by Author`, "plain", `a${RIGHT}b\nc${CENTRE}d`]));
+    const f = byId(a.findings, "strings-stacked");
+    expect(f.level).toBe("warn");
+    // The padded registry name, so the dialog's `sections.spec()` lookup finds it.
+    expect(f.section).toBe("STR ");
+    // Two strings, three stacked lines between them — and a blank slot is not one of them.
+    expect(f.title).toContain("2 strings");
+    expect(f.detail).toContain("3 lines");
+    expect(f.repair).toEqual({ kind: "set-strings", change: "stacks" });
+  });
+
+  it("names what the player would see, not a string index", () => {
+    const usage = new Map([[1, [{ kind: "name" }]], [2, [{ kind: "unit" }]], [3, [{ kind: "unit" }]]]);
+    const strings = [null as unknown as string, `Map${RIGHT}Name`, `Marine${RIGHT}x`, `Zealot${RIGHT}y`];
+    expect(byId(analyze(withStrings(strings, { usage })).findings, "strings-stacked").title)
+      .toBe("3 strings stack text on one line (the map name, 2 unit names)");
+    // Without `api.query.stringUsage()` it still says how many, just not where.
+    expect(byId(analyze(withStrings(strings)).findings, "strings-stacked").title)
+      .toBe("3 strings stack text on one line");
+  });
+
+  it("shows what the flattened string would read, so the loss can be judged", () => {
+    const f = byId(analyze(withStrings([`\x06Team${RIGHT}Melee`])).findings, "strings-stacked");
+    expect(f.detail).toContain('"Team Melee"');
+    expect(f.detail).not.toContain("\x06");
+  });
+
+  it("never ticks itself: the layout is something the map had and this drops it", () => {
+    const f = byId(analyze(withStrings([`Name${RIGHT}by Author`])).findings, "strings-stacked");
+    expect(f.recommended).toBe(false);
+    expect(f.detail).toMatch(/never ticked for you/);
+    // It says what survives as well as what does not.
+    expect(f.detail).toMatch(/keeping the colours and every word/);
+    expect(f.detail).toMatch(/loses is where the pieces sat/);
+  });
+
+  it("is reported apart from the colour finding, so either can be ticked alone", () => {
+    const a = analyze(withStrings([`\x06red\nplain`, `Name${RIGHT}by Author`]));
+    expect(ids(a.findings)).toContain("strings-bleed");
+    expect(ids(a.findings)).toContain("strings-stacked");
   });
 });

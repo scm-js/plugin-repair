@@ -77,6 +77,21 @@ describe("applyRepairs", () => {
     expect(applyRepairs(file, [{ kind: "remove", index: 99 }], ctx).skipped).toEqual(["no section at 99"]);
   });
 
+  it("hands the host each string change once, and nothing when none was ticked", () => {
+    const file: ChunkFile = { chunks: [chunk("STR ", bytes(0, 0))], trailing: null };
+    // The two are independent: ticking one must not carry the other through.
+    expect(applyRepairs(file, [{ kind: "set-strings", change: "stacks" }], ctx).setStrings).toEqual(["stacks"]);
+    expect(applyRepairs(file, [{ kind: "set-strings", change: "colours" }], ctx).setStrings).toEqual(["colours"]);
+    expect(applyRepairs(file, [
+      { kind: "set-strings", change: "colours" },
+      { kind: "set-strings", change: "stacks" },
+      { kind: "set-strings", change: "colours" },
+    ], ctx).setStrings).toEqual(["colours", "stacks"]);
+    expect(applyRepairs(file, [], ctx).setStrings).toEqual([]);
+    // Neither touches the bytes: the host rewrites them through the editor's model after.
+    expect(applyRepairs(file, [{ kind: "set-strings", change: "stacks" }], ctx).file.chunks[0].data).toEqual(bytes(0, 0));
+  });
+
   it("inserts missing sections where StarEdit puts them, from defaults or a copy", () => {
     const file: ChunkFile = { chunks: [chunk("VER ", bytes(205, 0)), chunk("DIM ", bytes(4, 0, 2, 0)), chunk("MTXM", new Uint8Array(16).fill(1)), chunk("SPRP", bytes(1, 0, 2, 0))], trailing: null };
     const out = applyRepairs(file, [

@@ -102,7 +102,8 @@ The editor's own:
   note, since the two differ under every doodad by design;
 - sections out of StarEdit's order — reorder, unticked.
 
-What the map says — the one check about content rather than shape:
+What the map says — the two checks about content rather than shape, both of them about a
+string the old game drew one way and nothing draws that way now:
 
 - strings a remaster draws in a colour their author never chose. 1.16.1 started every
   line in the default colour; Remastered carries the previous line's colour across the
@@ -110,7 +111,20 @@ What the map says — the one check about content rather than shape:
   the old game supplied at the head of each of those lines, which makes both games draw
   the string alike and changes nothing about what it says. It is unticked and always
   will be: whether the map was written before or after the remaster is the one thing the
-  plugin cannot read off the file, so it explains and leaves the choice to you.
+  plugin cannot read off the file, so it explains and leaves the choice to you;
+- strings that stack text on one line — the classic lobby and unit names. 0x12 and 0x13
+  move the text after them to the right or the centre of the line they are on, and
+  1.16.1 obeyed every one of them, so `Name<12>by Author` drew two pieces in two places
+  at once. Remastered does not draw them that way, and neither does the editor, which
+  takes one alignment for the whole line — the last the line sets — so every piece before
+  it lands somewhere nobody chose. The finding says
+  where the stacks are — the map name, so many unit names, read from
+  `api.query.stringUsage()` — and quotes what the first would read once flattened.
+  The repair drops the codes that split each line and joins its pieces left to right in
+  writing order, a space between two that would otherwise run together; colours and
+  every word survive, and what is lost is where the pieces sat. That loss is real, and
+  it is the reason this one is unticked: it is the only repair here that takes away
+  something the map had, so it is offered rather than recommended.
 
 What it does not do: anything at the archive level. A `.scx` whose MPQ is damaged fails
 before the editor has a file to hand the plugin.
@@ -124,15 +138,19 @@ a chunk list, plus what the editor knows about each section name (`api.document.
 the byte-level repairs to a chunk list, resolving indices to chunk objects first so a
 removal never shifts a later one. All three are pure and tested (`npm test`). `plugin.ts`
 listens for the `"document"` event with reason `"open"`, gathers the inputs, shows the
-dialog, and applies a repair in four steps, in this order: the byte-level ones as one
-`api.document.sections.replaceFile`; then the string colours through
-`api.document.update`, which goes via the editor's model and so stays undoable, where
-`replaceFile` installs a whole new scenario and would drop it; then `sections.rebuild`
-for the string table, which re-encodes STR from the model the step before wrote into;
-then one `api.document.edit` with `tx.rebuildIsom`. `colors.ts` holds the `TextHelpers`
-interface `analyze` takes its two colour readers through — `api.text.bleedingLines` and
-`.fixBleeding`, so the plugin carries no copy of the colour numbering, which is easy to
-get wrong and is worth having wrong in only one place.
+dialog, and applies a repair in five steps, in this order: the byte-level ones as one
+`api.document.sections.replaceFile`; then the two string rewrites, each its own
+`api.document.update` so either can be undone without the other — they go via the
+editor's model and so stay undoable, where `replaceFile` installs a whole new scenario
+and would drop them; then `sections.rebuild` for the string table, which re-encodes STR
+from the model those steps wrote into; then one `api.document.edit` with
+`tx.rebuildIsom`. `colors.ts` holds the `TextHelpers` interface `analyze` takes its four
+text readers through — `api.text.bleedingLines` / `.fixBleeding` and `.stackedLines` /
+`.flattenStacks` — so the plugin carries no copy of the control-byte numbering, which is
+easy to get wrong and is worth having wrong in only one place. The stacking pair was
+added to the editor for this plugin and lives there rather than here for that reason:
+where 0x12 and 0x13 put the text after them is the editor's table's business, and every
+plugin that shows or rewrites map text wants the same answer.
 
 Types come from [`@scm-js/plugin-api`](https://github.com/scm-js/plugin-api), a devDependency
 generated from the editor's own `src/plugins/api.ts`; `npm update @scm-js/plugin-api` takes the

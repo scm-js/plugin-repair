@@ -36,15 +36,16 @@ export type Repair =
   /** Reconstruct the ISOM lattice from the tiles (`tx.rebuildIsom`). */
   | { kind: "rebuild-isom" }
   /**
-   * Write the colour reset 1.16.1 supplied at every line break into the strings that
-   * need it (`api.text.fixBleeding` over `tx.strings`). The only repair that changes
-   * what the map *says* rather than how the file is put together, and the only one
-   * applied through `document.update` — so it marks STR dirty, goes through the editor's
-   * model and stays undoable, where the byte-level repairs replace the whole file.
-   * It carries no payload: the strings are read again at apply time, since the
-   * byte-level repairs run first and may have moved them.
+   * Rewrite the strings through the editor's model: `colours` writes the reset 1.16.1
+   * supplied at every line break (`api.text.fixBleeding`), `stacks` lays the lines the
+   * old game drew at more than one alignment out left to right (`api.text.flattenStacks`).
+   * The two repairs that change what the map *shows* rather than how the file is put
+   * together, and the only ones applied through `document.update` — so they mark STR
+   * dirty, go through the editor's model and stay undoable, where the byte-level repairs
+   * replace the whole file. Neither carries the text: the strings are read again at apply
+   * time, since the byte-level repairs run first and may have moved them.
    */
-  | { kind: "set-strings" };
+  | { kind: "set-strings"; change: "colours" | "stacks" };
 
 export interface Finding {
   /** Stable across re-analyses of the same problem, so ticks survive a refresh. */
@@ -76,10 +77,12 @@ export interface AnalysisInput {
   vcod?: Uint8Array | null;
   /** The ISOM's state, or `"unchecked"` when the tileset graphics are not there to measure it. */
   isom: IsomFacts | "unchecked";
-  /** `api.query.strings()`. Absent skips the colour check, which is the only content one. */
+  /** `api.query.strings()`. Absent skips the two content checks, the only ones about what the map shows. */
   strings?: (string | null)[];
-  /** `api.text`'s two colour readers. Absent skips the check with `strings`. */
+  /** `api.text`'s colour and stacking readers. Absent skips the checks with `strings`. */
   text?: TextHelpers;
+  /** `api.query.stringUsage()`, so a finding can say a stack is the map name rather than string 7. */
+  usage?: Map<number, { kind: string }[]>;
 }
 
 export interface Analysis {
@@ -447,12 +450,15 @@ export function analyze(input: AnalysisInput): Analysis {
 
   /* ── What the map says ─────────────────────────────────── */
 
-  // The one finding about content rather than structure. 1.16.1 reset the text colour at
+  // The two findings about content rather than structure, both of them about a string the
+  // old game drew one way and nothing draws that way now.
+  //
+  // 1.16.1 reset the text colour at
   // every line break and Remastered carries it on, so a string coloured on one line draws
   // the next in that colour too — in a map whose author never asked for it. Which of the
   // two is right depends on when the map was written, and that is the one thing that
   // cannot be read off the file, so this explains itself and never ticks itself.
-  const { strings, text } = input;
+  const { strings, text, usage } = input;
   if (strings && text) {
     const affected: number[] = [];
     let lines = 0;
@@ -472,7 +478,36 @@ export function analyze(input: AnalysisInput): Analysis {
         id: "strings-bleed", level: "warn", section: "STR ",
         title: `${fmt(affected.length)} string${one ? "" : "s"} draw${one ? "s" : ""} differently in Remastered than in 1.16.1`,
         detail: `1.16.1 started every line in the default colour; Remastered carries the previous line's colour across the break, so ${fmt(lines)} line${lines === 1 ? "" : "s"} here ${lines === 1 ? "is" : "are"} drawn in a colour the map never set${carried ? ` (${carried} is the first one carried over)` : ""} — for example ${JSON.stringify(example)}. Writing the reset the old game supplied at the head of each of those lines makes both games draw the string alike, and changes nothing about what it says. Whether that is a repair depends on when the map was made: one written for Remastered may mean the colours it shows, so this is never ticked for you.`,
-        repair: { kind: "set-strings" }, recommended: false,
+        repair: { kind: "set-strings", change: "colours" }, recommended: false,
+      });
+    }
+  }
+
+  // The other thing 1.16.1 did that nothing does now: it honoured every alignment code on
+  // a line, so `Name<12>by Author` drew two pieces in two places at once. Lobby names and
+  // unit names were built out of that. A modern renderer — Remastered, and the editor —
+  // takes one alignment for the whole line, so the pieces before the last code land
+  // somewhere nobody chose. This is the one repair that loses something the map had, so it
+  // says exactly what, and never ticks itself.
+  if (strings && text) {
+    const affected: number[] = [];
+    let lines = 0;
+    for (const [index, entry] of strings.entries()) {
+      if (!entry) continue;
+      const stacked = text.stackedLines(entry);
+      if (stacked.length === 0) continue;
+      affected.push(index);
+      lines += stacked.length;
+    }
+    if (affected.length > 0) {
+      const one = affected.length === 1;
+      const where = whereUsed(affected, usage);
+      const flat = snippet(text.flattenStacks(strings[affected[0]] ?? ""));
+      add({
+        id: "strings-stacked", level: "warn", section: "STR ",
+        title: `${fmt(affected.length)} string${one ? "" : "s"} stack${one ? "s" : ""} text on one line${where ? ` (${where})` : ""}`,
+        detail: `0x12 and 0x13 move the text after them to the right or the centre of the line they are on, and 1.16.1 obeyed every one of them, so ${fmt(lines)} line${lines === 1 ? " here is" : "s here are"} drawn in two or more places at once. Remastered does not draw them that way, and neither does the editor, which takes one alignment for the whole line — the last the line sets — so every piece before it lands somewhere its author did not choose. Flattening drops the codes that split each line and joins its pieces left to right in the order they are written, keeping the colours and every word: the first would read ${JSON.stringify(flat)}. What it loses is where the pieces sat, which is the layout the map was drawn for — so this is never ticked for you.`,
+        repair: { kind: "set-strings", change: "stacks" }, recommended: false,
       });
     }
   }
@@ -506,6 +541,36 @@ export function recoverable(trailing: Uint8Array): Chunk[] | null {
   if (parsed.chunks.some((c) => c.truncated || !readableName(c.name))) return null;
   return parsed.chunks;
 }
+
+/**
+ * What the affected strings are used for, in words — "the map name, 3 unit names" — so a
+ * finding names the thing the player sees rather than a string index. Empty without
+ * `api.query.stringUsage()`, and for strings nothing refers to.
+ */
+function whereUsed(indices: number[], usage: AnalysisInput["usage"]): string {
+  if (!usage) return "";
+  const counts = new Map<string, number>();
+  for (const i of indices) for (const u of usage.get(i) ?? []) counts.set(u.kind, (counts.get(u.kind) ?? 0) + 1);
+  const parts: string[] = [];
+  for (const noun of USAGE_NOUNS) {
+    const n = counts.get(noun.kind) ?? 0;
+    if (n > 0) parts.push(n === 1 ? noun.one : noun.many(fmt(n)));
+  }
+  return parts.join(", ");
+}
+
+/** `StringUsageKind`, in the order a finding lists them: what the player sees first, first. */
+const USAGE_NOUNS: { kind: string; one: string; many: (n: string) => string }[] = [
+  { kind: "name", one: "the map name", many: () => "the map name" },
+  { kind: "description", one: "the map description", many: () => "the map description" },
+  { kind: "unit", one: "1 unit name", many: (n) => `${n} unit names` },
+  { kind: "force", one: "1 force name", many: (n) => `${n} force names` },
+  { kind: "location", one: "1 location name", many: (n) => `${n} location names` },
+  { kind: "switch", one: "1 switch name", many: (n) => `${n} switch names` },
+  { kind: "briefing", one: "1 briefing line", many: (n) => `${n} briefing lines` },
+  { kind: "trigger", one: "1 trigger", many: (n) => `${n} triggers` },
+  { kind: "wav", one: "1 sound name", many: (n) => `${n} sound names` },
+];
 
 function repeatRule(k: SectionKnowledge | undefined): string {
   switch (k?.mode) {

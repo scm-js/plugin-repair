@@ -22,8 +22,8 @@ export interface RepairOutcome {
   /** The `rebuild` names, gathered for the host. */
   rebuild: string[];
   rebuildIsom: boolean;
-  /** `set-strings` was chosen: the host runs it through `document.update` after the file is written. */
-  setStrings: boolean;
+  /** The `set-strings` changes chosen, which the host runs through `document.update` after the file is written. */
+  setStrings: ("colours" | "stacks")[];
 }
 
 export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairContext): RepairOutcome {
@@ -33,7 +33,7 @@ export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairCon
   const skipped: string[] = [];
   const rebuild = new Set<string>();
   let rebuildIsom = false;
-  let setStrings = false;
+  const setStrings = new Set<"colours" | "stacks">();
   const spec = (name: string) => ctx.known.find((k) => k.name === name);
   const order = ctx.known.map((k) => k.name);
 
@@ -118,7 +118,7 @@ export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairCon
       // Not a byte-level repair: the strings are rewritten through the editor's model
       // once the file below has been installed, so the fix survives it.
       case "set-strings":
-        setStrings = true;
+        setStrings.add(r.change);
         break;
     }
   });
@@ -138,7 +138,7 @@ export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairCon
     const rank = (c: Chunk) => { const i = readableName(c.name) ? order.indexOf(c.name) : -1; return i < 0 ? order.length : i; };
     file.chunks = file.chunks.map((c, i) => ({ c, i })).sort((a, b) => rank(a.c) - rank(b.c) || a.i - b.i).map(({ c }) => c);
   }
-  return { file, skipped, rebuild: [...rebuild], rebuildIsom, setStrings };
+  return { file, skipped, rebuild: [...rebuild], rebuildIsom, setStrings: [...setStrings] };
 }
 
 /** Pad or cut to a size. */

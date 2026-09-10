@@ -479,7 +479,7 @@ function analyze(input) {
       });
     }
   }
-  const { strings, text } = input;
+  const { strings, text, usage } = input;
   if (strings && text) {
     const affected = [];
     let lines = 0;
@@ -501,7 +501,32 @@ function analyze(input) {
         section: "STR ",
         title: `${fmt(affected.length)} string${one ? "" : "s"} draw${one ? "s" : ""} differently in Remastered than in 1.16.1`,
         detail: `1.16.1 started every line in the default colour; Remastered carries the previous line's colour across the break, so ${fmt(lines)} line${lines === 1 ? "" : "s"} here ${lines === 1 ? "is" : "are"} drawn in a colour the map never set${carried ? ` (${carried} is the first one carried over)` : ""} \u2014 for example ${JSON.stringify(example)}. Writing the reset the old game supplied at the head of each of those lines makes both games draw the string alike, and changes nothing about what it says. Whether that is a repair depends on when the map was made: one written for Remastered may mean the colours it shows, so this is never ticked for you.`,
-        repair: { kind: "set-strings" },
+        repair: { kind: "set-strings", change: "colours" },
+        recommended: false
+      });
+    }
+  }
+  if (strings && text) {
+    const affected = [];
+    let lines = 0;
+    for (const [index, entry] of strings.entries()) {
+      if (!entry) continue;
+      const stacked = text.stackedLines(entry);
+      if (stacked.length === 0) continue;
+      affected.push(index);
+      lines += stacked.length;
+    }
+    if (affected.length > 0) {
+      const one = affected.length === 1;
+      const where = whereUsed(affected, usage);
+      const flat = snippet(text.flattenStacks(strings[affected[0]] ?? ""));
+      add({
+        id: "strings-stacked",
+        level: "warn",
+        section: "STR ",
+        title: `${fmt(affected.length)} string${one ? "" : "s"} stack${one ? "s" : ""} text on one line${where ? ` (${where})` : ""}`,
+        detail: `0x12 and 0x13 move the text after them to the right or the centre of the line they are on, and 1.16.1 obeyed every one of them, so ${fmt(lines)} line${lines === 1 ? " here is" : "s here are"} drawn in two or more places at once. Remastered does not draw them that way, and neither does the editor, which takes one alignment for the whole line \u2014 the last the line sets \u2014 so every piece before it lands somewhere its author did not choose. Flattening drops the codes that split each line and joins its pieces left to right in the order they are written, keeping the colours and every word: the first would read ${JSON.stringify(flat)}. What it loses is where the pieces sat, which is the layout the map was drawn for \u2014 so this is never ticked for you.`,
+        repair: { kind: "set-strings", change: "stacks" },
         recommended: false
       });
     }
@@ -536,6 +561,28 @@ function recoverable(trailing) {
   if (parsed.chunks.some((c) => c.truncated || !readableName(c.name))) return null;
   return parsed.chunks;
 }
+function whereUsed(indices, usage) {
+  if (!usage) return "";
+  const counts = /* @__PURE__ */ new Map();
+  for (const i of indices) for (const u of usage.get(i) ?? []) counts.set(u.kind, (counts.get(u.kind) ?? 0) + 1);
+  const parts = [];
+  for (const noun of USAGE_NOUNS) {
+    const n = counts.get(noun.kind) ?? 0;
+    if (n > 0) parts.push(n === 1 ? noun.one : noun.many(fmt(n)));
+  }
+  return parts.join(", ");
+}
+var USAGE_NOUNS = [
+  { kind: "name", one: "the map name", many: () => "the map name" },
+  { kind: "description", one: "the map description", many: () => "the map description" },
+  { kind: "unit", one: "1 unit name", many: (n) => `${n} unit names` },
+  { kind: "force", one: "1 force name", many: (n) => `${n} force names` },
+  { kind: "location", one: "1 location name", many: (n) => `${n} location names` },
+  { kind: "switch", one: "1 switch name", many: (n) => `${n} switch names` },
+  { kind: "briefing", one: "1 briefing line", many: (n) => `${n} briefing lines` },
+  { kind: "trigger", one: "1 trigger", many: (n) => `${n} triggers` },
+  { kind: "wav", one: "1 sound name", many: (n) => `${n} sound names` }
+];
 function repeatRule(k) {
   switch (k?.mode) {
     case "overlay":
@@ -568,7 +615,7 @@ function applyRepairs(input, repairs, ctx) {
   const skipped = [];
   const rebuild = /* @__PURE__ */ new Set();
   let rebuildIsom = false;
-  let setStrings = false;
+  const setStrings = /* @__PURE__ */ new Set();
   const spec = (name) => ctx.known.find((k) => k.name === name);
   const order = ctx.known.map((k) => k.name);
   const targets = repairs.map((r) => "index" in r ? at(r.index) : null);
@@ -674,7 +721,7 @@ function applyRepairs(input, repairs, ctx) {
       // Not a byte-level repair: the strings are rewritten through the editor's model
       // once the file below has been installed, so the fix survives it.
       case "set-strings":
-        setStrings = true;
+        setStrings.add(r.change);
         break;
     }
   });
@@ -698,7 +745,7 @@ function applyRepairs(input, repairs, ctx) {
     };
     file.chunks = file.chunks.map((c, i) => ({ c, i })).sort((a, b) => rank(a.c) - rank(b.c) || a.i - b.i).map(({ c }) => c);
   }
-  return { file, skipped, rebuild: [...rebuild], rebuildIsom, setStrings };
+  return { file, skipped, rebuild: [...rebuild], rebuildIsom, setStrings: [...setStrings] };
 }
 function fit(data, size, fill) {
   const out = new Uint8Array(size).fill(fill);
@@ -819,7 +866,7 @@ var Session = class {
     } catch {
       isom = "unchecked";
     }
-    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text });
+    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage() });
   }
   /* ── The dialog ─────────────────────────────────────────── */
   open() {
@@ -923,6 +970,27 @@ var Session = class {
     this.repairButton.disabled = n === 0 || this.busy;
   }
   /* ── Doing it ───────────────────────────────────────────── */
+  /**
+   * One of the two string repairs, through the editor's model so it stays undoable and STR
+   * is marked dirty. `rewrite` is `api.text`'s own rewriter and `measure` says how much of
+   * a string it acted on, for the note and the line in the report.
+   */
+  rewriteStrings(label, rewrite, measure, note) {
+    let strings = 0;
+    let units = 0;
+    const r = this.api.document.update(label, (tx) => {
+      for (const [index, entry] of tx.strings.list().entries()) {
+        if (entry === null) continue;
+        const next = rewrite(entry);
+        if (next === entry) continue;
+        units += measure(entry);
+        tx.strings.set(index, next);
+        strings++;
+      }
+      tx.note(note(strings));
+    });
+    return { strings, units, changed: r.changed };
+  }
   async repair() {
     const { api } = this;
     const chosen = this.selected();
@@ -941,21 +1009,23 @@ var Session = class {
         const r = sections.replaceFile(serializeChunks(outcome.file));
         done.push(`${plural(byteLevel.length, "repair")} written to the file${r.warnings.length > 0 ? ` \u2014 the parser still says: ${r.warnings.join("; ")}` : ""}`);
       }
-      if (outcome.setStrings) {
-        let fixed = 0;
-        let lines = 0;
-        const r = api.document.update("Fix string colours", (tx) => {
-          for (const [index, entry] of tx.strings.list().entries()) {
-            if (entry === null) continue;
-            const next = api.text.fixBleeding(entry);
-            if (next === entry) continue;
-            lines += api.text.bleedingLines(entry).length;
-            tx.strings.set(index, next);
-            fixed++;
-          }
-          tx.note(`${plural(fixed, "string")} given the line-break colour reset`);
-        });
-        done.push(fixed === 0 ? "the strings already read the same in both games" : `${plural(fixed, "string")} given the reset 1.16.1 supplied at ${plural(lines, "line break")}${r.changed ? "" : " (nothing changed)"}`);
+      if (outcome.setStrings.includes("colours")) {
+        const { strings, units, changed } = this.rewriteStrings(
+          "Fix string colours",
+          (s) => api.text.fixBleeding(s),
+          (s) => api.text.bleedingLines(s).length,
+          (n) => `${plural(n, "string")} given the line-break colour reset`
+        );
+        done.push(strings === 0 ? "the strings already read the same in both games" : `${plural(strings, "string")} given the reset 1.16.1 supplied at ${plural(units, "line break")}${changed ? "" : " (nothing changed)"}`);
+      }
+      if (outcome.setStrings.includes("stacks")) {
+        const { strings, units, changed } = this.rewriteStrings(
+          "Flatten stacked text",
+          (s) => api.text.flattenStacks(s),
+          (s) => api.text.stackedLines(s).length,
+          (n) => `${plural(n, "string")} laid out on one line`
+        );
+        done.push(strings === 0 ? "no string stacked text on a line" : `${plural(strings, "string")} unstacked \u2014 ${plural(units, "line")} laid out left to right${changed ? "" : " (nothing changed)"}`);
       }
       if (outcome.rebuild.length > 0) {
         const r = sections.rebuild(outcome.rebuild);
