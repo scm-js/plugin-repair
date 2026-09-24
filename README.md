@@ -49,7 +49,8 @@ Resize. **Restore original** puts the bytes back as they were when the map opene
 under a new name if you want to keep both.
 
 *Check maps when they open*, in the dialog's footer, turns the automatic check off; Tools
-▸ Repair Map… still works.
+▸ Repair Map… still works. The same setting is on the plugin's page in **Edit ▸
+Preferences ▸ Plugins ▸ Repair**, which is where to turn it back on.
 
 ## What it looks for
 

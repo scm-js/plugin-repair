@@ -761,7 +761,30 @@ function activate(api) {
   } });
   api.menu.add("Tools", { label: "Repair Map\u2026", after: "Check Map\u2026", enabled: () => api.document.isOpen(), command: "check" });
   api.events.on("document", (e) => session.onDocument(e));
+  registerPreferencesPage(api);
   return () => session.dispose();
+}
+function registerPreferencesPage(api) {
+  const w = api.ui.widgets;
+  let ask = null;
+  api.ui.preferencesPage({
+    mount(body) {
+      ask = w.checkbox("Check maps when they open", { value: api.storage.get(ASK_KEY, true) });
+      body.append(
+        ask,
+        w.hint("Reads each map as it opens and shows the Repair dialog when something is missing or damaged. Off, Tools \u25B8 Repair Map\u2026 still runs the check.")
+      );
+      return () => {
+        ask = null;
+      };
+    },
+    apply() {
+      if (ask) api.storage.set(ASK_KEY, ask.input.checked);
+    },
+    reset() {
+      if (ask) ask.input.checked = true;
+    }
+  });
 }
 var ASK_KEY = "ask-on-open";
 var LEVEL_LABEL = { error: "error", warn: "warning", info: "note" };

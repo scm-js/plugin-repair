@@ -6,7 +6,8 @@
  * lists what is missing, damaged or odd, each finding saying what the game does with
  * the file as it is and what fixing it would change. Tick what you want and press
  * Repair; the original bytes stay in memory until the next map opens, so Restore
- * original undoes the lot. Tools ▸ Repair Map… runs the same check by hand.
+ * original undoes the lot. Tools ▸ Repair Map… runs the same check by hand, and the
+ * plugin's page in Edit ▸ Preferences turns the check on open off and on again.
  *
  * `chk.ts` reads the container, `analyze.ts` turns a chunk list into findings and
  * `repair.ts` applies the byte-level ones — all pure, all tested; this file gathers the
@@ -16,7 +17,7 @@
  * `@scm-js/plugin-api` is the editor's type declarations, a devDependency generated from
  * its own `src/plugins/api.ts`; the host erases the type-only import.
  */
-import type { ButtonElement, DialogHandle, DocumentEvent, PluginApi } from "@scm-js/plugin-api";
+import type { ButtonElement, CheckboxElement, DialogHandle, DocumentEvent, PluginApi } from "@scm-js/plugin-api";
 import { analyze, describeName, type Analysis, type Finding, type IsomFacts, type Level } from "./analyze";
 import { parseChunks, readableName, serializeChunks } from "./chk";
 import { applyRepairs } from "./repair";
@@ -26,7 +27,30 @@ export default function activate(api: PluginApi) {
   api.commands.register({ id: "check", title: "Repair Map…", enabled: () => api.document.isOpen(), run: () => { void session.check(false); } });
   api.menu.add("Tools", { label: "Repair Map…", after: "Check Map…", enabled: () => api.document.isOpen(), command: "check" });
   api.events.on("document", (e) => session.onDocument(e));
+  registerPreferencesPage(api);
   return () => session.dispose();
+}
+
+/**
+ * The plugin's page under Edit ▸ Preferences ▸ Plugins: the one setting, so it can be
+ * found again after the dialog's footer turned it off and the dialog stopped appearing.
+ * Written on OK or Apply, so Cancel leaves it as it was.
+ */
+function registerPreferencesPage(api: PluginApi) {
+  const w = api.ui.widgets;
+  let ask: CheckboxElement | null = null;
+  api.ui.preferencesPage({
+    mount(body) {
+      ask = w.checkbox("Check maps when they open", { value: api.storage.get(ASK_KEY, true) });
+      body.append(
+        ask,
+        w.hint("Reads each map as it opens and shows the Repair dialog when something is missing or damaged. Off, Tools ▸ Repair Map… still runs the check."),
+      );
+      return () => { ask = null; };
+    },
+    apply() { if (ask) api.storage.set(ASK_KEY, ask.input.checked); },
+    reset() { if (ask) ask.input.checked = true; },
+  });
 }
 
 const ASK_KEY = "ask-on-open";
