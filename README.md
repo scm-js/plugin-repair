@@ -1,6 +1,6 @@
 # Repair
 
-A plugin for [scmJS](https://github.com/jeany55/scm-js), the browser-based StarCraft 1 /
+A plugin for [scmJS](https://github.com/scm-js/scm-js), the browser-based StarCraft 1 /
 Brood War map editor. It checks a map file the way the game reads it and repairs what
 you tick.
 
