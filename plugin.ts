@@ -21,12 +21,16 @@ import type { ButtonElement, CheckboxElement, DialogHandle, DocumentEvent, Plugi
 import { analyze, describeName, type Analysis, type Finding, type IsomFacts, type Level } from "./analyze";
 import { parseChunks, readableName, serializeChunks } from "./chk";
 import { applyRepairs } from "./repair";
+import { msg } from "./i18n";
+import { KO } from "./ko";
 
 export default function activate(api: PluginApi) {
+  api.i18n.register({ ko: KO });
   const session = new Session(api);
-  api.commands.register({ id: "check", title: "Repair Map…", enabled: () => api.document.isOpen(), run: () => { void session.check(false); } });
-  api.menu.add("Tools", { label: "Repair Map…", after: "Check Map…", enabled: () => api.document.isOpen(), command: "check" });
+  api.commands.register({ id: "check", title: msg("Repair Map…"), enabled: () => api.document.isOpen(), run: () => { void session.check(false); } });
+  api.menu.add("Tools", { label: msg("Repair Map…"), after: "Check Map…", enabled: () => api.document.isOpen(), command: "check" });
   api.events.on("document", (e) => session.onDocument(e));
+  api.events.on("language", () => { void session.relabel(); });
   registerPreferencesPage(api);
   return () => session.dispose();
 }
@@ -38,13 +42,14 @@ export default function activate(api: PluginApi) {
  */
 function registerPreferencesPage(api: PluginApi) {
   const w = api.ui.widgets;
+  const t = api.i18n.t;
   let ask: CheckboxElement | null = null;
   api.ui.preferencesPage({
     mount(body) {
-      ask = w.checkbox("Check maps when they open", { value: api.storage.get(ASK_KEY, true) });
+      ask = w.checkbox(t("Check maps when they open"), { value: api.storage.get(ASK_KEY, true) });
       body.append(
         ask,
-        w.hint("Reads each map as it opens and shows the Repair dialog when something is missing or damaged. Off, Tools ▸ Repair Map… still runs the check."),
+        w.hint(t("Reads each map as it opens and shows the Repair dialog when something is missing or damaged. Off, Tools ▸ Repair Map… still runs the check.")),
       );
       return () => { ask = null; };
     },
@@ -54,7 +59,7 @@ function registerPreferencesPage(api: PluginApi) {
 }
 
 const ASK_KEY = "ask-on-open";
-const LEVEL_LABEL: Record<Level, string> = { error: "error", warn: "warning", info: "note" };
+const LEVEL_LABEL: Record<Level, string> = { error: msg("error"), warn: msg("warning"), info: msg("note") };
 
 const STYLE = `
 .rp { display: flex; flex-direction: column; gap: 8px; font-size: 12px; min-height: 0; }
@@ -98,6 +103,19 @@ class Session {
 
   constructor(api: PluginApi) { this.api = api; }
 
+  private t = (text: string, params?: Record<string, string | number>) => this.api.i18n.t(text, params);
+
+  /** The language changed: the findings are written in it, so read the map again and draw the dialog anew. */
+  async relabel() {
+    if (!this.handle?.isOpen() || this.busy) return;
+    const generation = this.generation;
+    this.handle.setTitle(this.t("Repair Map"));
+    const analysis = await this.gather();
+    if (generation !== this.generation) return;
+    this.analysis = analysis;
+    this.render();
+  }
+
   private get askOnOpen(): boolean { return this.api.storage.get(ASK_KEY, true); }
 
   onDocument(e: DocumentEvent) {
@@ -127,14 +145,14 @@ class Session {
     const generation = this.generation;
     this.busy = true;
     // A manual check with the dialog up: the footer says so and holds its buttons meanwhile.
-    if (this.handle?.isOpen()) this.handle.setBusy("Checking the map…");
+    if (this.handle?.isOpen()) this.handle.setBusy(this.t("Checking the map…"));
     try {
       const analysis = await this.gather();
       if (generation !== this.generation) return;
       this.analysis = analysis;
       const { counts } = analysis;
       if (auto && counts.error + counts.warn === 0) {
-        if (counts.info > 0) api.ui.status(`Repair: nothing wrong with ${this.name()}; ${plural(counts.info, "note")} (Tools ▸ Repair Map…).`);
+        if (counts.info > 0) api.ui.status(this.t("Repair: nothing wrong with {name}; {n, plural, one {# note} other {# notes}} (Tools ▸ Repair Map…).", { name: this.name(), n: counts.info }));
         return;
       }
       if (this.handle?.isOpen()) this.render(); else this.open();
@@ -144,7 +162,7 @@ class Session {
     }
   }
 
-  private name(): string { return this.api.document.info()?.fileName ?? this.api.document.info()?.name ?? "the map"; }
+  private name(): string { return this.api.document.info()?.fileName ?? this.api.document.info()?.name ?? this.t("the map"); }
 
   private async gather(): Promise<Analysis> {
     const { sections } = this.api.document;
@@ -159,14 +177,14 @@ class Session {
     } catch {
       isom = "unchecked";
     }
-    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage() });
+    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage(), t: this.t });
   }
 
   /* ── The dialog ─────────────────────────────────────────── */
 
   private open() {
     this.handle = this.api.ui.dialog({
-      title: "Repair Map",
+      title: this.t("Repair Map"),
       size: "lg",
       mount: (body) => {
         this.body = body;
@@ -184,32 +202,37 @@ class Session {
     const { api, body, analysis } = this;
     if (!body || !analysis) return;
     const { el, widgets } = api.ui;
+    const { t } = this;
     body.replaceChildren();
     const root = el("div", { className: "rp" }, el("style", {}, STYLE));
 
     const { counts, findings } = analysis;
     const total = findings.length;
     const summary = total === 0
-      ? "Nothing to repair."
-      : [counts.error && plural(counts.error, "error"), counts.warn && plural(counts.warn, "warning"), counts.info && plural(counts.info, "note")].filter(Boolean).join(", ");
+      ? t("Nothing to repair.")
+      : [
+        counts.error && t("{n, plural, one {# error} other {# errors}}", { n: counts.error }),
+        counts.warn && t("{n, plural, one {# warning} other {# warnings}}", { n: counts.warn }),
+        counts.info && t("{n, plural, one {# note} other {# notes}}", { n: counts.info }),
+      ].filter(Boolean).join(", ");
     root.append(el("div", { className: "rp-head" }, el("b", {}, this.name()), el("span", { className: "rp-dim" }, summary)));
 
     const list = el("div", { className: "rp-list" });
-    if (total === 0) list.append(el("div", { className: "rp-none" }, "Every section is where the game expects it, at the size it reads, with nothing repeated or left over."));
+    if (total === 0) list.append(el("div", { className: "rp-none" }, t("Every section is where the game expects it, at the size it reads, with nothing repeated or left over.")));
     for (const f of findings) {
       const tick = widgets.checkbox(f.title, {
         value: f.repair ? (this.ticks.get(f.id) ?? f.recommended) : false,
         disabled: !f.repair,
-        title: f.repair ? (f.recommended ? "Recommended" : "Optional — read the note first") : "Nothing the plugin can do about this one",
+        title: f.repair ? (f.recommended ? t("Recommended") : t("Optional — read the note first")) : t("Nothing the plugin can do about this one"),
         onChange: (v) => { this.ticks.set(f.id, v); this.relabelRepairButton(); },
       });
       const row = el("div", { className: "rp-row" },
-        el("span", { className: `rp-badge ${f.level}`, title: LEVEL_LABEL[f.level] }, LEVEL_LABEL[f.level]),
-        el("span", { className: "rp-sec", title: f.section ? (readableName(f.section) ? api.document.sections.spec(f.section)?.what ?? "" : describeName(f.section)) : "the file" }, f.section ? (readableName(f.section) ? f.section : "????") : "file"),
+        el("span", { className: `rp-badge ${f.level}`, title: t(LEVEL_LABEL[f.level]) }, t(LEVEL_LABEL[f.level])),
+        el("span", { className: "rp-sec", title: f.section ? (readableName(f.section) ? api.document.sections.spec(f.section)?.what ?? "" : describeName(f.section)) : t("the file") }, f.section ? (readableName(f.section) ? f.section : "????") : t("file")),
         tick,
       );
       const item = el("div", { className: "rp-item" }, row, el("div", { className: "rp-detail" }, f.detail));
-      if (this.attempted.has(f.id)) item.append(el("div", { className: "rp-again" }, "Still reported after the last repair."));
+      if (this.attempted.has(f.id)) item.append(el("div", { className: "rp-again" }, t("Still reported after the last repair.")));
       list.append(item);
     }
     root.append(list);
@@ -217,14 +240,14 @@ class Session {
     const repairable = findings.filter((f) => f.repair);
     const setAll = (pick: (f: Finding) => boolean) => { for (const f of repairable) this.ticks.set(f.id, pick(f)); this.render(); };
     const chosen = this.selected().length;
-    this.repairButton = widgets.button(chosen === 0 ? "Repair" : `Repair ${chosen} selected`, { primary: true, onClick: () => { void this.repair(); } });
+    this.repairButton = widgets.button(this.repairLabel(chosen), { primary: true, onClick: () => { void this.repair(); } });
     const actions = el("div", { className: "rp-actions" },
-      widgets.button("Recommended", { ghost: true, disabled: repairable.length === 0, title: "Tick the repairs that only write what the game already does, or restore what the editor needs", onClick: () => setAll((f) => f.recommended) }),
-      widgets.button("All", { ghost: true, disabled: repairable.length === 0, onClick: () => setAll(() => true) }),
-      widgets.button("None", { ghost: true, disabled: repairable.length === 0, onClick: () => setAll(() => false) }),
+      widgets.button(t("Recommended"), { ghost: true, disabled: repairable.length === 0, title: t("Tick the repairs that only write what the game already does, or restore what the editor needs"), onClick: () => setAll((f) => f.recommended) }),
+      widgets.button(t("All"), { ghost: true, disabled: repairable.length === 0, onClick: () => setAll(() => true) }),
+      widgets.button(t("None"), { ghost: true, disabled: repairable.length === 0, onClick: () => setAll(() => false) }),
       el("span", { className: "rp-grow" }),
       this.original && this.repaired
-        ? widgets.button("Restore original", { title: "Put the file back as it was when it opened", onClick: () => { void this.restore(); } })
+        ? widgets.button(t("Restore original"), { title: t("Put the file back as it was when it opened"), onClick: () => { void this.restore(); } })
         : null,
       this.repairButton,
     );
@@ -234,19 +257,21 @@ class Session {
     if (this.log.length > 0) root.append(el("div", { className: "rp-log" }, this.log.join("\n")));
 
     root.append(el("div", { className: "rp-foot" },
-      widgets.checkbox("Check maps when they open", { value: this.askOnOpen, onChange: (v) => api.storage.set(ASK_KEY, v) }),
-      el("span", {}, "A repair rewrites the file and clears the undo history, as Section Explorer and Resize do."),
+      widgets.checkbox(t("Check maps when they open"), { value: this.askOnOpen, onChange: (v) => api.storage.set(ASK_KEY, v) }),
+      el("span", {}, t("A repair rewrites the file and clears the undo history, as Section Explorer and Resize do.")),
     ));
     body.append(root);
   }
 
   private repairButton: ButtonElement | null = null;
 
+  private repairLabel(n: number) { return n === 0 ? this.t("Repair") : this.t("Repair {n} selected", { n }); }
+
   /** The count in the button's label follows the ticks; the ring, when there is one, is a child node before the text. */
   private relabelRepairButton() {
     if (!this.repairButton) return;
     const n = this.selected().length;
-    const text = n === 0 ? "Repair" : `Repair ${n} selected`;
+    const text = this.repairLabel(n);
     const last = this.repairButton.lastChild;
     if (last && last.nodeType === Node.TEXT_NODE) last.textContent = text; else this.repairButton.append(text);
     this.updateRepairButton();
@@ -285,22 +310,24 @@ class Session {
   }
 
   private async repair() {
-    const { api } = this;
+    const { api, t } = this;
     const chosen = this.selected();
     if (chosen.length === 0 || this.busy || !api.document.isOpen()) return;
     const { sections } = api.document;
     const generation = this.generation;
     this.busy = true;
     this.updateRepairButton();
-    this.handle?.setBusy("Repairing…");
+    this.handle?.setBusy(t("Repairing…"));
     const done: string[] = [];
     try {
-      const outcome = applyRepairs(parseChunks(sections.file()), chosen.map((f) => f.repair!), { known: sections.known(), defaults: (n) => sections.defaults(n) });
+      const outcome = applyRepairs(parseChunks(sections.file()), chosen.map((f) => f.repair!), { known: sections.known(), defaults: (n) => sections.defaults(n), t });
       const hostRepairs = new Set(["rebuild", "rebuild-isom", "set-strings"]);
       const byteLevel = chosen.filter((f) => !hostRepairs.has(f.repair!.kind));
       if (byteLevel.length > 0) {
         const r = sections.replaceFile(serializeChunks(outcome.file));
-        done.push(`${plural(byteLevel.length, "repair")} written to the file${r.warnings.length > 0 ? ` — the parser still says: ${r.warnings.join("; ")}` : ""}`);
+        done.push(r.warnings.length > 0
+          ? t("{n, plural, one {# repair} other {# repairs}} written to the file — the parser still says: {warnings}", { n: byteLevel.length, warnings: r.warnings.join("; ") })
+          : t("{n, plural, one {# repair} other {# repairs}} written to the file", { n: byteLevel.length }));
       }
       // After `replaceFile`, which installs a whole new scenario and would drop these, and
       // before `rebuild`, which re-encodes STR from the model they write into. The strings
@@ -309,56 +336,58 @@ class Session {
       // they regret without losing the other.
       if (outcome.setStrings.includes("colours")) {
         const { strings, units, changed } = this.rewriteStrings(
-          "Fix string colours",
+          t("Fix string colours"),
           (s) => api.text.fixBleeding(s),
           (s) => api.text.bleedingLines(s).length,
-          (n) => `${plural(n, "string")} given the line-break colour reset`,
+          (n) => t("{n, plural, one {# string} other {# strings}} given the line-break colour reset", { n }),
         );
         done.push(strings === 0
-          ? "the strings already read the same in both games"
-          : `${plural(strings, "string")} given the reset 1.16.1 supplied at ${plural(units, "line break")}${changed ? "" : " (nothing changed)"}`);
+          ? t("the strings already read the same in both games")
+          : t("{n, plural, one {# string} other {# strings}} given the reset 1.16.1 supplied at {breaks, plural, one {# line break} other {# line breaks}}", { n: strings, breaks: units }) + (changed ? "" : t(" (nothing changed)")));
       }
       if (outcome.setStrings.includes("stacks")) {
         const { strings, units, changed } = this.rewriteStrings(
-          "Flatten stacked text",
+          t("Flatten stacked text"),
           (s) => api.text.flattenStacks(s),
           (s) => api.text.stackedLines(s).length,
-          (n) => `${plural(n, "string")} laid out on one line`,
+          (n) => t("{n, plural, one {# string} other {# strings}} laid out on one line", { n }),
         );
         done.push(strings === 0
-          ? "no string stacked text on a line"
-          : `${plural(strings, "string")} unstacked — ${plural(units, "line")} laid out left to right${changed ? "" : " (nothing changed)"}`);
+          ? t("no string stacked text on a line")
+          : t("{n, plural, one {# string} other {# strings}} unstacked — {lines, plural, one {# line} other {# lines}} laid out left to right", { n: strings, lines: units }) + (changed ? "" : t(" (nothing changed)")));
       }
       if (outcome.rebuild.length > 0) {
         const r = sections.rebuild(outcome.rebuild);
-        done.push(r.rebuilt.length > 0 ? `${r.rebuilt.map((n) => n.trim()).join(", ")} rebuilt from the editor's model` : "nothing to rebuild");
+        done.push(r.rebuilt.length > 0 ? t("{names} rebuilt from the editor's model", { names: r.rebuilt.map((n) => n.trim()).join(", ") }) : t("nothing to rebuild"));
       }
       if (outcome.rebuildIsom) {
-        let note = "the ISOM could not be rebuilt (tileset graphics not loaded)";
-        api.document.edit("Rebuild ISOM", (tx) => {
+        let note = t("the ISOM could not be rebuilt (tileset graphics not loaded)");
+        api.document.edit(t("Rebuild ISOM"), (tx) => {
           const r = tx.rebuildIsom();
           if (!r) return;
           note = r.created
-            ? `ISOM rebuilt from the tiles — ${plural(r.diamonds, "diamond")}${r.unresolved > 0 ? `, ${r.unresolved} guessed under doodads or off the edge` : ""}`
-            : r.changed > 0 ? `ISOM brought back in step — ${plural(r.changed, "lattice value")} changed` : "the lattice was already the closest fit the tiles allow";
+            ? (r.unresolved > 0
+              ? t("ISOM rebuilt from the tiles — {n, plural, one {# diamond} other {# diamonds}}, {guessed} guessed under doodads or off the edge", { n: r.diamonds, guessed: r.unresolved })
+              : t("ISOM rebuilt from the tiles — {n, plural, one {# diamond} other {# diamonds}}", { n: r.diamonds }))
+            : r.changed > 0 ? t("ISOM brought back in step — {n, plural, one {# lattice value} other {# lattice values}} changed", { n: r.changed }) : t("the lattice was already the closest fit the tiles allow");
         });
         done.push(note);
       }
-      for (const s of outcome.skipped) done.push(`skipped: ${s}`);
+      for (const s of outcome.skipped) done.push(t("skipped: {why}", { why: s }));
       this.repaired = true;
       // The event listener sees a "replace" and leaves the original alone; a fresh look shows what is left.
       // Nothing is re-armed: a finding that survives its own repair used to come back ticked with the
       // button live, which is a press that can only do nothing. Ticking again is the user's to do.
       this.ticks.clear();
       this.attempted = new Set(chosen.map((f) => f.id));
-      api.ui.status(`Repair: ${done.join("; ")}.`);
-      this.log = [`Done: ${done.join("; ")}.`];
+      api.ui.status(t("Repair: {done}.", { done: done.join("; ") }));
+      this.log = [t("Done: {done}.", { done: done.join("; ") })];
       if (generation === this.generation) {
         this.analysis = await this.gather();
         for (const f of this.analysis.findings) this.ticks.set(f.id, false);
       }
     } catch (err) {
-      this.log = [`Repair failed: ${err instanceof Error ? err.message : String(err)}`];
+      this.log = [t("Repair failed: {error}", { error: err instanceof Error ? err.message : String(err) })];
       api.ui.status(this.log[0]);
     } finally {
       this.busy = false;
@@ -373,14 +402,14 @@ class Session {
     const generation = this.generation;
     this.busy = true;
     this.updateRepairButton();
-    this.handle?.setBusy("Restoring the original…");
+    this.handle?.setBusy(this.t("Restoring the original…"));
     try {
       api.document.sections.replaceFile(this.original.bytes);
       this.repaired = false;
       this.ticks.clear();
       this.attempted.clear();
-      this.log = ["The file is back as it was when it opened."];
-      api.ui.status(`Repair: ${this.name()} restored to the file that was opened.`);
+      this.log = [this.t("The file is back as it was when it opened.")];
+      api.ui.status(this.t("Repair: {name} restored to the file that was opened.", { name: this.name() }));
       if (generation === this.generation) this.analysis = await this.gather();
     } finally {
       this.busy = false;
@@ -389,5 +418,3 @@ class Session {
     }
   }
 }
-
-const plural = (n: number, word: string) => `${n.toLocaleString("en-US")} ${word}${n === 1 ? "" : "s"}`;

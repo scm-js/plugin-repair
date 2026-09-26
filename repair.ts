@@ -8,11 +8,14 @@
 import { chunk, combine, named, parseChunks, readableName, type Chunk, type ChunkFile } from "./chk";
 import type { Repair } from "./analyze";
 import type { SectionKnowledge } from "@scm-js/plugin-api";
+import { english, type Translate } from "./i18n";
 
 export interface RepairContext {
   known: SectionKnowledge[];
   /** `api.document.sections.defaults`. */
   defaults(name: string): Uint8Array | null;
+  /** What the `skipped` lines are written through: `api.i18n.t` in the editor, English without it. */
+  t?: Translate;
 }
 
 export interface RepairOutcome {
@@ -31,6 +34,7 @@ export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairCon
   const file: ChunkFile = { chunks, trailing: input.trailing };
   const at = (index: number) => chunks[index];
   const skipped: string[] = [];
+  const t = ctx.t ?? english;
   const rebuild = new Set<string>();
   let rebuildIsom = false;
   const setStrings = new Set<"colours" | "stacks">();
@@ -47,7 +51,7 @@ export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairCon
     const target = targets[i];
     switch (r.kind) {
       case "fix-length":
-        if (!target) { skipped.push(`no section at ${r.index}`); break; }
+        if (!target) { skipped.push(t("no section at {index}", { index: r.index })); break; }
         target.declaredSize = target.data.length;
         target.truncated = false;
         break;
@@ -55,14 +59,14 @@ export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairCon
         file.trailing = null;
         break;
       case "recover-trailing": {
-        if (!file.trailing) { skipped.push("no trailing bytes"); break; }
+        if (!file.trailing) { skipped.push(t("no trailing bytes")); break; }
         const parsed = parseChunks(file.trailing);
         inserts.push(...parsed.chunks.map((c) => chunk(c.name, c.data)));
         file.trailing = null;
         break;
       }
       case "remove":
-        if (!target) { skipped.push(`no section at ${r.index}`); break; }
+        if (!target) { skipped.push(t("no section at {index}", { index: r.index })); break; }
         removals.add(target);
         break;
       case "collapse": {
@@ -78,7 +82,7 @@ export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairCon
         break;
       }
       case "resize": {
-        if (!target) { skipped.push(`no section at ${r.index}`); break; }
+        if (!target) { skipped.push(t("no section at {index}", { index: r.index })); break; }
         const data = new Uint8Array(r.size).fill(r.fill);
         data.set(target.data.subarray(0, r.size));
         target.data = data;
@@ -87,7 +91,7 @@ export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairCon
         break;
       }
       case "trim-records": {
-        if (!target) { skipped.push(`no section at ${r.index}`); break; }
+        if (!target) { skipped.push(t("no section at {index}", { index: r.index })); break; }
         const whole = target.data.length - (target.data.length % r.stride);
         target.data = target.data.slice(0, whole);
         target.declaredSize = whole;
@@ -95,13 +99,13 @@ export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairCon
       }
       case "insert": {
         const data = r.source === "defaults" ? ctx.defaults(r.name) : (() => { const k = spec(r.source.copyOf); return combine(named(file, r.source.copyOf), k?.mode ?? "last", k?.size); })();
-        if (!data) { skipped.push(`nothing to write for ${r.name.trim()}`); break; }
+        if (!data) { skipped.push(t("nothing to write for {name}", { name: r.name.trim() })); break; }
         const k = spec(r.name);
         inserts.push(chunk(r.name, k?.size != null && data.length !== k.size ? fit(data, k.size, r.name === "MASK" ? 0xff : 0) : data));
         break;
       }
       case "write":
-        if (!target) { skipped.push(`no section at ${r.index}`); break; }
+        if (!target) { skipped.push(t("no section at {index}", { index: r.index })); break; }
         target.data = r.bytes.slice();
         target.declaredSize = r.bytes.length;
         target.truncated = false;

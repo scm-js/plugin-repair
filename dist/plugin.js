@@ -90,6 +90,56 @@ function snippet(text, max = 40) {
   return out;
 }
 
+// i18n.ts
+var msg = (text) => text;
+var english = (text, params) => {
+  if (!params) return text;
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const open = text.indexOf("{", i);
+    if (open < 0) {
+      out += text.slice(i);
+      break;
+    }
+    out += text.slice(i, open);
+    const close = matching(text, open);
+    const inner = text.slice(open + 1, close);
+    const plural = /^(\w+), plural, (.*)$/s.exec(inner);
+    if (plural) {
+      const n = Number(params[plural[1]]);
+      const branches = /* @__PURE__ */ new Map();
+      const body = plural[2];
+      let j = 0;
+      while (j < body.length) {
+        const m = /\s*(=?\w+)\s*\{/y;
+        m.lastIndex = j;
+        const hit = m.exec(body);
+        if (!hit) break;
+        const start = m.lastIndex - 1;
+        const end = matching(body, start);
+        branches.set(hit[1], body.slice(start + 1, end));
+        j = end + 1;
+      }
+      const branch = branches.get(`=${n}`) ?? (n === 1 ? branches.get("one") : void 0) ?? branches.get("other") ?? "";
+      out += english(branch.replaceAll("#", n.toLocaleString("en-US")), params);
+    } else {
+      const name = inner.split("|")[0];
+      out += name in params ? String(params[name]) : `{${inner}}`;
+    }
+    i = close + 1;
+  }
+  return out;
+};
+function matching(text, open) {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}" && --depth === 0) return i;
+  }
+  return text.length;
+}
+
 // analyze.ts
 var MAP_VERSIONS = /* @__PURE__ */ new Set([59, 63, 205, 206]);
 var MAX_UNIT_ID = 227;
@@ -98,6 +148,7 @@ var PLAYER_TYPE_INACTIVE = 0;
 var PLAYER_RACE_INACTIVE = 7;
 function analyze(input) {
   const { file, known, required } = input;
+  const t = input.t ?? english;
   const spec = new Map(known.map((k) => [k.name, k]));
   const findings = [];
   const add = (f) => {
@@ -110,14 +161,14 @@ function analyze(input) {
     return combine(live(name), k?.mode ?? "last", k?.size ?? void 0);
   };
   file.chunks.forEach((c, index) => {
-    const label = c.name.trim() || `chunk at ${c.offset}`;
+    const label = c.name.trim() || t("chunk at {offset}", { offset: c.offset });
     if (c.declaredSize < 0) {
       add({
         id: `negative:${index}`,
         level: "error",
         section: c.name,
-        title: `${label} declares a negative length (${c.declaredSize})`,
-        detail: "A negative length makes the game seek backwards and read earlier bytes again; the editor stops reading here and keeps the rest of the file as-is. Removing the header leaves what came before it.",
+        title: t("{name} declares a negative length ({size})", { name: label, size: c.declaredSize }),
+        detail: t("A negative length makes the game seek backwards and read earlier bytes again; the editor stops reading here and keeps the rest of the file as-is. Removing the header leaves what came before it."),
         repair: { kind: "remove", index },
         recommended: true
       });
@@ -127,8 +178,8 @@ function analyze(input) {
         id: `truncated:${index}`,
         level: "warn",
         section: c.name,
-        title: `${label} declares ${fmt(c.declaredSize)} bytes but the file has ${fmt(c.data.length)}`,
-        detail: "The game reads what is there and stops. Declaring the length the section really has makes the file say the same thing.",
+        title: t("{name} declares {declared} bytes but the file has {actual}", { name: label, declared: fmt(c.declaredSize), actual: fmt(c.data.length) }),
+        detail: t("The game reads what is there and stops. Declaring the length the section really has makes the file say the same thing."),
         repair: { kind: "fix-length", index },
         recommended: true
       });
@@ -138,8 +189,8 @@ function analyze(input) {
         id: `junk-name:${index}`,
         level: "warn",
         section: c.name,
-        title: `A section named ${describeName(c.name)} (${fmt(c.data.length)} bytes)`,
-        detail: "The game ignores a section it does not know, but this one's name is not even text \u2014 a marker left by a protector or damage. Removing it drops those bytes.",
+        title: t("A section named {name} ({size} bytes)", { name: describeName(c.name), size: fmt(c.data.length) }),
+        detail: t("The game ignores a section it does not know, but this one's name is not even text \u2014 a marker left by a protector or damage. Removing it drops those bytes."),
         repair: { kind: "remove", index },
         recommended: true
       });
@@ -149,8 +200,8 @@ function analyze(input) {
         id: `unknown:${index}`,
         level: "info",
         section: c.name,
-        title: `An unknown section ${c.name.trim()} (${fmt(c.data.length)} bytes)`,
-        detail: empty ? "The game ignores a section it does not know, and this one holds nothing \u2014 what a header with a negative length leaves behind once the editor has read the file. Removing it loses nothing." : "The game ignores a section it does not know; some editors keep their own data this way. It is left in place.",
+        title: t("An unknown section {name} ({size} bytes)", { name: c.name.trim(), size: fmt(c.data.length) }),
+        detail: empty ? t("The game ignores a section it does not know, and this one holds nothing \u2014 what a header with a negative length leaves behind once the editor has read the file. Removing it loses nothing.") : t("The game ignores a section it does not know; some editors keep their own data this way. It is left in place."),
         repair: empty ? { kind: "remove", index } : null,
         recommended: empty
       });
@@ -163,8 +214,8 @@ function analyze(input) {
         id: "trailing",
         level: "warn",
         section: null,
-        title: `${fmt(file.trailing.length)} bytes after the last readable section hold ${recovered.length} more (${recovered.map((c) => c.name.trim()).join(", ")})`,
-        detail: "They follow a header the reader could not act on, so neither the game nor the editor sees them as sections. Recovering them appends them as sections in their own right.",
+        title: t("{size} bytes after the last readable section hold {n} more ({names})", { size: fmt(file.trailing.length), n: recovered.length, names: recovered.map((c) => c.name.trim()).join(", ") }),
+        detail: t("They follow a header the reader could not act on, so neither the game nor the editor sees them as sections. Recovering them appends them as sections in their own right."),
         repair: { kind: "recover-trailing" },
         recommended: true
       });
@@ -173,8 +224,8 @@ function analyze(input) {
         id: "trailing",
         level: "info",
         section: null,
-        title: `${fmt(file.trailing.length)} bytes after the last readable section`,
-        detail: "They are not sections; the game never reads them and Save writes them back unchanged. Dropping them loses nothing the game uses.",
+        title: t("{size} bytes after the last readable section", { size: fmt(file.trailing.length) }),
+        detail: t("They are not sections; the game never reads them and Save writes them back unchanged. Dropping them loses nothing the game uses."),
         repair: { kind: "drop-trailing" },
         recommended: true
       });
@@ -191,8 +242,8 @@ function analyze(input) {
         id: `repeat:${c.name}`,
         level: "warn",
         section: c.name,
-        title: `${c.name.trim()} appears ${parts.length} times`,
-        detail: `${repeatRule(k)} Folding them into one section holds exactly what the game ends up with.`,
+        title: t("{name} appears {n} times", { name: c.name.trim(), n: parts.length }),
+        detail: `${repeatRule(k, t)} ${t("Folding them into one section holds exactly what the game ends up with.")}`,
         repair: { kind: "collapse", name: c.name },
         recommended: true
       });
@@ -207,8 +258,8 @@ function analyze(input) {
         id: `size:${c.name}:${index}`,
         level: "warn",
         section: c.name,
-        title: `${c.name.trim()} is ${fmt(c.data.length)} bytes; the game reads ${fmt(k.size)}`,
-        detail: short ? `The game reads what is there into a zeroed buffer${c.name === "MASK" ? " (fog everywhere for the missing part)" : ""}. Padding the section to the full size writes those bytes out.` : "The game reads the first bytes and ignores the rest. Cutting the section to that size drops what it never sees.",
+        title: t("{name} is {size} bytes; the game reads {wanted}", { name: c.name.trim(), size: fmt(c.data.length), wanted: fmt(k.size) }),
+        detail: short ? c.name === "MASK" ? t("The game reads what is there into a zeroed buffer (fog everywhere for the missing part). Padding the section to the full size writes those bytes out.") : t("The game reads what is there into a zeroed buffer. Padding the section to the full size writes those bytes out.") : t("The game reads the first bytes and ignores the rest. Cutting the section to that size drops what it never sees."),
         repair: { kind: "resize", index, size: k.size, fill: c.name === "MASK" ? 255 : 0 },
         recommended: true
       });
@@ -218,8 +269,8 @@ function analyze(input) {
         id: `stride:${c.name}:${index}`,
         level: "warn",
         section: c.name,
-        title: `${c.name.trim()} ends with ${stray} stray bytes after its last whole record`,
-        detail: `Records are ${k.stride} bytes each; the game reads whole ones and drops the remainder. Trimming does the same.`,
+        title: t("{name} ends with {n} stray bytes after its last whole record", { name: c.name.trim(), n: stray }),
+        detail: t("Records are {stride} bytes each; the game reads whole ones and drops the remainder. Trimming does the same.", { stride: k.stride }),
         repair: { kind: "trim-records", index, stride: k.stride },
         recommended: true
       });
@@ -232,8 +283,8 @@ function analyze(input) {
       id: `missing:${name}`,
       level: "error",
       section: name,
-      title: `${name.trim()} is missing (${spec.get(name)?.what ?? "required"})`,
-      detail: other ? "The game will not load a map without it. TILE \u2014 the editor's copy of the terrain \u2014 is here, so the terrain can be restored from it." : "The game will not load a map without it. Adding the section on StarEdit's defaults makes the file loadable; the data it held is gone.",
+      title: t("{name} is missing ({what})", { name: name.trim(), what: spec.get(name)?.what ?? t("required") }),
+      detail: other ? t("The game will not load a map without it. TILE \u2014 the editor's copy of the terrain \u2014 is here, so the terrain can be restored from it.") : t("The game will not load a map without it. Adding the section on StarEdit's defaults makes the file loadable; the data it held is gone."),
       repair: { kind: "insert", name, source: other ? { copyOf: other } : "defaults" },
       recommended: true
     });
@@ -243,8 +294,8 @@ function analyze(input) {
       id: "missing:TILE",
       level: "warn",
       section: "TILE",
-      title: "TILE is missing (the editor's terrain layer)",
-      detail: "The game draws MTXM and never reads TILE, so protectors strip it. The editor's terrain brushes work on both; copying MTXM into a new TILE gives them the ground back (doodads included, which TILE normally leaves out).",
+      title: t("TILE is missing (the editor's terrain layer)"),
+      detail: t("The game draws MTXM and never reads TILE, so protectors strip it. The editor's terrain brushes work on both; copying MTXM into a new TILE gives them the ground back (doodads included, which TILE normally leaves out)."),
       repair: { kind: "insert", name: "TILE", source: { copyOf: "MTXM" } },
       recommended: true
     });
@@ -257,8 +308,8 @@ function analyze(input) {
       id: "dim",
       level: "error",
       section: "DIM ",
-      title: `DIM says the map is ${width ?? "?"} \xD7 ${height ?? "?"} tiles`,
-      detail: "The game takes maps from 1 \xD7 1 to 256 \xD7 256. The true size cannot be read off the file; Scenario \u25B8 Resize sets it once the map is open.",
+      title: t("DIM says the map is {width} \xD7 {height} tiles", { width: width ?? "?", height: height ?? "?" }),
+      detail: t("The game takes maps from 1 \xD7 1 to 256 \xD7 256. The true size cannot be read off the file; Scenario \u25B8 Resize sets it once the map is open."),
       repair: null,
       recommended: false
     });
@@ -272,8 +323,8 @@ function analyze(input) {
       id: "era",
       level: "info",
       section: "ERA ",
-      title: `ERA is ${eraValue}; the game uses ${masked}`,
-      detail: "Only the low three bits pick the tileset, and some protectors set the rest. Writing the value the game uses changes nothing it draws.",
+      title: t("ERA is {value}; the game uses {masked}", { value: eraValue, masked }),
+      detail: t("Only the low three bits pick the tileset, and some protectors set the rest. Writing the value the game uses changes nothing it draws."),
       repair: { kind: "write", index: lastIndex(file, "ERA "), bytes },
       recommended: true
     });
@@ -285,8 +336,8 @@ function analyze(input) {
       id: "ver",
       level: "warn",
       section: "VER ",
-      title: `VER is ${version}, not a version StarEdit writes (59, 63, 205, 206)`,
-      detail: "The game decides which settings sections to read from it. Scenario \u25B8 Map Revision sets a known one once the map is open.",
+      title: t("VER is {version}, not a version StarEdit writes (59, 63, 205, 206)", { version }),
+      detail: t("The game decides which settings sections to read from it. Scenario \u25B8 Map Revision sets a known one once the map is open."),
       repair: null,
       recommended: false
     });
@@ -300,8 +351,8 @@ function analyze(input) {
         id: "type",
         level: "info",
         section: "TYPE",
-        title: `TYPE is ${describeName(text2)}, not RAWS or RAWB`,
-        detail: `The game checks it against the version it is running. ${wanted} is what StarEdit writes for this file's VER.`,
+        title: t("TYPE is {value}, not RAWS or RAWB", { value: describeName(text2) }),
+        detail: t("The game checks it against the version it is running. {wanted} is what StarEdit writes for this file's VER.", { wanted }),
         repair: { kind: "write", index: lastIndex(file, "TYPE"), bytes: new Uint8Array([...wanted].map((ch) => ch.charCodeAt(0))) },
         recommended: true
       });
@@ -317,8 +368,8 @@ function analyze(input) {
         id: "ownr",
         level: "warn",
         section: "OWNR",
-        title: `OWNR holds an unknown player type for ${players(bad)}`,
-        detail: "Player types run 0 to 7 (inactive, computer, human, rescuable, neutral). Setting the unknown ones to inactive takes those slots out of the game; Scenario \u25B8 Player Settings can put them back.",
+        title: t("OWNR holds an unknown player type for {players}", { players: players(bad, t) }),
+        detail: t("Player types run 0 to 7 (inactive, computer, human, rescuable, neutral). Setting the unknown ones to inactive takes those slots out of the game; Scenario \u25B8 Player Settings can put them back."),
         repair: { kind: "write", index: lastIndex(file, "OWNR"), bytes },
         recommended: false
       });
@@ -334,8 +385,8 @@ function analyze(input) {
         id: "side",
         level: "warn",
         section: "SIDE",
-        title: `SIDE holds an unknown race for ${players(bad)}`,
-        detail: "Races run 0 to 7 (Zerg, Terran, Protoss, user-selectable, random, inactive). Setting the unknown ones to inactive; Scenario \u25B8 Player Settings can change them.",
+        title: t("SIDE holds an unknown race for {players}", { players: players(bad, t) }),
+        detail: t("Races run 0 to 7 (Zerg, Terran, Protoss, user-selectable, random, inactive). Setting the unknown ones to inactive; Scenario \u25B8 Player Settings can change them."),
         repair: { kind: "write", index: lastIndex(file, "SIDE"), bytes },
         recommended: false
       });
@@ -348,7 +399,7 @@ function analyze(input) {
     const read = wide ? u32 : u16;
     const count = read(str, 0);
     if (count === null) {
-      add({ id: `str:${name}`, level: "warn", section: name, title: `${name.trim()} is too short to hold its string count`, detail: "The game reads no strings from it. Rebuilding writes the table the editor holds (every string it could read).", repair: { kind: "rebuild", names: [name] }, recommended: true });
+      add({ id: `str:${name}`, level: "warn", section: name, title: t("{name} is too short to hold its string count", { name: name.trim() }), detail: t("The game reads no strings from it. Rebuilding writes the table the editor holds (every string it could read)."), repair: { kind: "rebuild", names: [name] }, recommended: true });
       continue;
     }
     const headerSize = (wide ? 4 : 2) * (1 + count);
@@ -362,8 +413,8 @@ function analyze(input) {
         id: `str:${name}`,
         level: "warn",
         section: name,
-        title: headerSize > str.length ? `${name.trim()} declares ${fmt(count)} strings but is too short for their offsets` : `${fmt(outside)} of ${fmt(count)} string offsets point outside ${name.trim()}`,
-        detail: "The game shows those strings empty (or reads garbage). Rebuilding writes the table the editor holds: every string it could read, each offset in range.",
+        title: headerSize > str.length ? t("{name} declares {count} strings but is too short for their offsets", { name: name.trim(), count: fmt(count) }) : t("{outside} of {count} string offsets point outside {name}", { outside: fmt(outside), count: fmt(count), name: name.trim() }),
+        detail: t("The game shows those strings empty (or reads garbage). Rebuilding writes the table the editor holds: every string it could read, each offset in range."),
         repair: { kind: "rebuild", names: [name] },
         recommended: true
       });
@@ -392,8 +443,8 @@ function analyze(input) {
         id: "units",
         level: "warn",
         section: "UNIT",
-        title: `${bad.length} of ${fmt(records)} unit records name a unit type or owner the game does not have`,
-        detail: "A unit id past 227 or an owner past player 12 is nothing the game can place; it skips or misreads the record. Removing those records is the only clean repair, and it is data loss \u2014 look at them in the Units layer first.",
+        title: t("{bad} of {records} unit records name a unit type or owner the game does not have", { bad: bad.length, records: fmt(records) }),
+        detail: t("A unit id past 227 or an owner past player 12 is nothing the game can place; it skips or misreads the record. Removing those records is the only clean repair, and it is data loss \u2014 look at them in the Units layer first."),
         repair: { kind: "write", index: lastIndex(file, "UNIT"), bytes: keep },
         recommended: false
       });
@@ -405,8 +456,8 @@ function analyze(input) {
       id: "vcod",
       level: "info",
       section: "VCOD",
-      title: "VCOD is not StarEdit's table",
-      detail: "Every map StarEdit writes carries the same 1040-byte verification table; the game uses it to hash the player sections. A different table is a sign of a protector or another editor, and the map may still play. Restoring the standard table is what the editor writes for a new map.",
+      title: t("VCOD is not StarEdit's table"),
+      detail: t("Every map StarEdit writes carries the same 1040-byte verification table; the game uses it to hash the player sections. A different table is a sign of a protector or another editor, and the map may still play. Restoring the standard table is what the editor writes for a new map."),
       repair: { kind: "write", index: lastIndex(file, "VCOD"), bytes: input.vcod.slice() },
       recommended: false
     });
@@ -415,7 +466,7 @@ function analyze(input) {
   const isomSpec = spec.get("ISOM");
   if (input.isom === "unchecked") {
     if (isomChunks.length === 0) {
-      add({ id: "isom", level: "warn", section: "ISOM", title: "No ISOM section \u2014 the isometric brush is off", detail: "The game never reads ISOM; it is the editor's record of the terrain lattice. Rebuilding it from the tiles needs the tileset graphics, which are not loaded.", repair: null, recommended: false });
+      add({ id: "isom", level: "warn", section: "ISOM", title: t("No ISOM section \u2014 the isometric brush is off"), detail: t("The game never reads ISOM; it is the editor's record of the terrain lattice. Rebuilding it from the tiles needs the tileset graphics, which are not loaded."), repair: null, recommended: false });
     }
   } else if (!input.isom.present) {
     const wrongSize = isomChunks.length > 0 && isomSpec?.size != null && isomChunks[isomChunks.length - 1].data.length !== isomSpec.size;
@@ -423,8 +474,8 @@ function analyze(input) {
       id: "isom",
       level: "warn",
       section: "ISOM",
-      title: wrongSize ? `ISOM is ${fmt(isomChunks[isomChunks.length - 1].data.length)} bytes; a ${isomSpec.size}-byte lattice fits this map` : "No ISOM section \u2014 the isometric brush is off",
-      detail: "The game never reads ISOM; it is the editor's record of the terrain lattice, and protectors strip it. Rebuilding it from the tiles is exact for terrain laid down isometrically and a best guess under doodads and for hand-placed tiles. One undo step.",
+      title: wrongSize ? t("ISOM is {size} bytes; a {wanted}-byte lattice fits this map", { size: fmt(isomChunks[isomChunks.length - 1].data.length), wanted: isomSpec.size }) : t("No ISOM section \u2014 the isometric brush is off"),
+      detail: t("The game never reads ISOM; it is the editor's record of the terrain lattice, and protectors strip it. Rebuilding it from the tiles is exact for terrain laid down isometrically and a best guess under doodads and for hand-placed tiles. One undo step."),
       repair: { kind: "rebuild-isom" },
       recommended: true
     });
@@ -438,8 +489,8 @@ function analyze(input) {
         id: "isom-stale",
         level: "warn",
         section: "ISOM",
-        title: `ISOM is behind the tiles under about ${recover}% of the map`,
-        detail: `Terrain edited with the Rect or Tile brush, or by another tool, left the lattice behind; isometric strokes near there will not join up. Rebuilding it from the tiles brings that ${recover}% back in step${leftover >= 1 ? `, and leaves about ${leftover}% that no diamond lattice describes` : ""}. One undo step.`,
+        title: t("ISOM is behind the tiles under about {share}% of the map", { share: recover }),
+        detail: leftover >= 1 ? t("Terrain edited with the Rect or Tile brush, or by another tool, left the lattice behind; isometric strokes near there will not join up. Rebuilding it from the tiles brings that {share}% back in step, and leaves about {leftover}% that no diamond lattice describes. One undo step.", { share: recover, leftover }) : t("Terrain edited with the Rect or Tile brush, or by another tool, left the lattice behind; isometric strokes near there will not join up. Rebuilding it from the tiles brings that {share}% back in step. One undo step.", { share: recover }),
         repair: { kind: "rebuild-isom" },
         recommended: true
       });
@@ -448,8 +499,8 @@ function analyze(input) {
         id: "isom-inherent",
         level: "info",
         section: "ISOM",
-        title: `About ${leftover}% of the map is terrain no diamond lattice describes`,
-        detail: "Hand-placed tiles, blends, or ground another editor laid. The lattice is already as close to the tiles as a rebuild can bring it, so there is nothing to repair; the isometric brush will not join up in those places, and the Rect, Tile and Blend brushes work as usual.",
+        title: t("About {share}% of the map is terrain no diamond lattice describes", { share: leftover }),
+        detail: t("Hand-placed tiles, blends, or ground another editor laid. The lattice is already as close to the tiles as a rebuild can bring it, so there is nothing to repair; the isometric brush will not join up in those places, and the Rect, Tile and Blend brushes work as usual."),
         repair: null,
         recommended: false
       });
@@ -472,8 +523,8 @@ function analyze(input) {
         id: "tile",
         level: stripped ? "warn" : "info",
         section: "TILE",
-        title: stripped ? "TILE is blank: the editor's terrain layer was zeroed" : `TILE and MTXM differ on ${fmt(differ)} of ${fmt(cells)} tiles`,
-        detail: stripped ? "The game draws MTXM and never reads TILE, so protectors zero it. Copying MTXM over it gives the terrain brushes the ground back (doodads included, which TILE normally leaves out)." : "TILE is the ground without doodads, so the two differ under every doodad, and that is normal. Where they differ everywhere else, TILE was edited by another tool. Copying MTXM over it makes them agree; the doodads' own records stay.",
+        title: stripped ? t("TILE is blank: the editor's terrain layer was zeroed") : t("TILE and MTXM differ on {differ} of {cells} tiles", { differ: fmt(differ), cells: fmt(cells) }),
+        detail: stripped ? t("The game draws MTXM and never reads TILE, so protectors zero it. Copying MTXM over it gives the terrain brushes the ground back (doodads included, which TILE normally leaves out).") : t("TILE is the ground without doodads, so the two differ under every doodad, and that is normal. Where they differ everywhere else, TILE was edited by another tool. Copying MTXM over it makes them agree; the doodads' own records stay."),
         repair: { kind: "write", index: lastIndex(file, "TILE"), bytes: mtxm.slice(0, tile.length) },
         recommended: stripped
       });
@@ -493,14 +544,17 @@ function analyze(input) {
       if (!carried) carried = bleeding[0].carried.label;
     }
     if (affected.length > 0) {
-      const one = affected.length === 1;
       const example = snippet(strings[affected[0]] ?? "");
       add({
         id: "strings-bleed",
         level: "warn",
         section: "STR ",
-        title: `${fmt(affected.length)} string${one ? "" : "s"} draw${one ? "s" : ""} differently in Remastered than in 1.16.1`,
-        detail: `1.16.1 started every line in the default colour; Remastered carries the previous line's colour across the break, so ${fmt(lines)} line${lines === 1 ? "" : "s"} here ${lines === 1 ? "is" : "are"} drawn in a colour the map never set${carried ? ` (${carried} is the first one carried over)` : ""} \u2014 for example ${JSON.stringify(example)}. Writing the reset the old game supplied at the head of each of those lines makes both games draw the string alike, and changes nothing about what it says. Whether that is a repair depends on when the map was made: one written for Remastered may mean the colours it shows, so this is never ticked for you.`,
+        title: t("{n, plural, one {# string draws} other {# strings draw}} differently in Remastered than in 1.16.1", { n: affected.length }),
+        detail: t("1.16.1 started every line in the default colour; Remastered carries the previous line's colour across the break, so {lines, plural, one {# line here is} other {# lines here are}} drawn in a colour the map never set{carried} \u2014 for example {example}. Writing the reset the old game supplied at the head of each of those lines makes both games draw the string alike, and changes nothing about what it says. Whether that is a repair depends on when the map was made: one written for Remastered may mean the colours it shows, so this is never ticked for you.", {
+          lines,
+          carried: carried ? t(" ({colour} is the first one carried over)", { colour: carried }) : "",
+          example: JSON.stringify(example)
+        }),
         repair: { kind: "set-strings", change: "colours" },
         recommended: false
       });
@@ -517,15 +571,14 @@ function analyze(input) {
       lines += stacked.length;
     }
     if (affected.length > 0) {
-      const one = affected.length === 1;
-      const where = whereUsed(affected, usage);
+      const where = whereUsed(affected, usage, t);
       const flat = snippet(text.flattenStacks(strings[affected[0]] ?? ""));
       add({
         id: "strings-stacked",
         level: "warn",
         section: "STR ",
-        title: `${fmt(affected.length)} string${one ? "" : "s"} stack${one ? "s" : ""} text on one line${where ? ` (${where})` : ""}`,
-        detail: `0x12 and 0x13 move the text after them to the right or the centre of the line they are on, which rendered properly in 1.16.1, so ${fmt(lines)} line${lines === 1 ? " here is" : "s here are"} drawn in two or more places at once. Remastered does not draw them that way, and neither does this editor. Flattening drops the codes that split each line and joins its pieces left to right in the order they are written, keeping the colours and every word: the first would read ${JSON.stringify(flat)}.`,
+        title: where ? t("{n, plural, one {# string stacks} other {# strings stack}} text on one line ({where})", { n: affected.length, where }) : t("{n, plural, one {# string stacks} other {# strings stack}} text on one line", { n: affected.length }),
+        detail: t("0x12 and 0x13 move the text after them to the right or the centre of the line they are on, which rendered properly in 1.16.1, so {lines, plural, one {# line here is} other {# lines here are}} drawn in two or more places at once. Remastered does not draw them that way, and neither does this editor. Flattening drops the codes that split each line and joins its pieces left to right in the order they are written, keeping the colours and every word: the first would read {example}.", { lines, example: JSON.stringify(flat) }),
         repair: { kind: "set-strings", change: "stacks" },
         recommended: false
       });
@@ -542,8 +595,8 @@ function analyze(input) {
       id: "order",
       level: "info",
       section: null,
-      title: "The sections are not in StarEdit's order",
-      detail: "The game reads them in any order. Putting them in the order StarEdit writes them makes the file look like one it saved; unknown sections go to the end.",
+      title: t("The sections are not in StarEdit's order"),
+      detail: t("The game reads them in any order. Putting them in the order StarEdit writes them makes the file look like one it saved; unknown sections go to the end."),
       repair: { kind: "reorder" },
       recommended: false
     });
@@ -561,43 +614,55 @@ function recoverable(trailing) {
   if (parsed.chunks.some((c) => c.truncated || !readableName(c.name))) return null;
   return parsed.chunks;
 }
-function whereUsed(indices, usage) {
+function whereUsed(indices, usage, t) {
   if (!usage) return "";
   const counts = /* @__PURE__ */ new Map();
   for (const i of indices) for (const u of usage.get(i) ?? []) counts.set(u.kind, (counts.get(u.kind) ?? 0) + 1);
   const parts = [];
-  for (const noun of USAGE_NOUNS) {
-    const n = counts.get(noun.kind) ?? 0;
-    if (n > 0) parts.push(n === 1 ? noun.one : noun.many(fmt(n)));
+  for (const kind of USAGE_ORDER) {
+    const n = counts.get(kind) ?? 0;
+    if (n > 0) parts.push(usageNoun(kind, n, t));
   }
   return parts.join(", ");
 }
-var USAGE_NOUNS = [
-  { kind: "name", one: "the map name", many: () => "the map name" },
-  { kind: "description", one: "the map description", many: () => "the map description" },
-  { kind: "unit", one: "1 unit name", many: (n) => `${n} unit names` },
-  { kind: "force", one: "1 force name", many: (n) => `${n} force names` },
-  { kind: "location", one: "1 location name", many: (n) => `${n} location names` },
-  { kind: "switch", one: "1 switch name", many: (n) => `${n} switch names` },
-  { kind: "briefing", one: "1 briefing line", many: (n) => `${n} briefing lines` },
-  { kind: "trigger", one: "1 trigger", many: (n) => `${n} triggers` },
-  { kind: "wav", one: "1 sound name", many: (n) => `${n} sound names` }
-];
-function repeatRule(k) {
+var USAGE_ORDER = ["name", "description", "unit", "force", "location", "switch", "briefing", "trigger", "wav"];
+function usageNoun(kind, n, t) {
+  switch (kind) {
+    case "name":
+      return t("the map name");
+    case "description":
+      return t("the map description");
+    case "unit":
+      return t("{n, plural, one {# unit name} other {# unit names}}", { n });
+    case "force":
+      return t("{n, plural, one {# force name} other {# force names}}", { n });
+    case "location":
+      return t("{n, plural, one {# location name} other {# location names}}", { n });
+    case "switch":
+      return t("{n, plural, one {# switch name} other {# switch names}}", { n });
+    case "briefing":
+      return t("{n, plural, one {# briefing line} other {# briefing lines}}", { n });
+    case "trigger":
+      return t("{n, plural, one {# trigger} other {# triggers}}", { n });
+    default:
+      return t("{n, plural, one {# sound name} other {# sound names}}", { n });
+  }
+}
+function repeatRule(k, t) {
   switch (k?.mode) {
     case "overlay":
-      return `The game copies each occurrence over the front of one ${k.size !== null ? `${fmt(k.size)}-byte ` : ""}buffer in file order, so a later short one changes only its first bytes.`;
+      return k.size !== null ? t("The game copies each occurrence over the front of one {size}-byte buffer in file order, so a later short one changes only its first bytes.", { size: fmt(k.size) }) : t("The game copies each occurrence over the front of one buffer in file order, so a later short one changes only its first bytes.");
     case "append":
-      return "The game keeps every occurrence's records, in file order.";
+      return t("The game keeps every occurrence's records, in file order.");
     case "first":
-      return "The game uses the first occurrence and ignores the rest.";
+      return t("The game uses the first occurrence and ignores the rest.");
     default:
-      return "The game uses the last occurrence and ignores the rest.";
+      return t("The game uses the last occurrence and ignores the rest.");
   }
 }
 var lastIndex = (file, name) => file.chunks.map((c) => c.name).lastIndexOf(name);
 var fmt = (n) => n.toLocaleString("en-US");
-var players = (slots) => slots.length === 1 ? `player ${slots[0] + 1}` : `players ${slots.map((i) => i + 1).join(", ")}`;
+var players = (slots, t) => slots.length === 1 ? t("player {n}", { n: slots[0] + 1 }) : t("players {list}", { list: slots.map((i) => i + 1).join(", ") });
 var same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 function describeName(name) {
   const shown = [...name].map((ch) => {
@@ -613,6 +678,7 @@ function applyRepairs(input, repairs, ctx) {
   const file = { chunks, trailing: input.trailing };
   const at = (index) => chunks[index];
   const skipped = [];
+  const t = ctx.t ?? english;
   const rebuild = /* @__PURE__ */ new Set();
   let rebuildIsom = false;
   const setStrings = /* @__PURE__ */ new Set();
@@ -627,7 +693,7 @@ function applyRepairs(input, repairs, ctx) {
     switch (r.kind) {
       case "fix-length":
         if (!target) {
-          skipped.push(`no section at ${r.index}`);
+          skipped.push(t("no section at {index}", { index: r.index }));
           break;
         }
         target.declaredSize = target.data.length;
@@ -638,7 +704,7 @@ function applyRepairs(input, repairs, ctx) {
         break;
       case "recover-trailing": {
         if (!file.trailing) {
-          skipped.push("no trailing bytes");
+          skipped.push(t("no trailing bytes"));
           break;
         }
         const parsed = parseChunks(file.trailing);
@@ -648,7 +714,7 @@ function applyRepairs(input, repairs, ctx) {
       }
       case "remove":
         if (!target) {
-          skipped.push(`no section at ${r.index}`);
+          skipped.push(t("no section at {index}", { index: r.index }));
           break;
         }
         removals.add(target);
@@ -667,7 +733,7 @@ function applyRepairs(input, repairs, ctx) {
       }
       case "resize": {
         if (!target) {
-          skipped.push(`no section at ${r.index}`);
+          skipped.push(t("no section at {index}", { index: r.index }));
           break;
         }
         const data = new Uint8Array(r.size).fill(r.fill);
@@ -679,7 +745,7 @@ function applyRepairs(input, repairs, ctx) {
       }
       case "trim-records": {
         if (!target) {
-          skipped.push(`no section at ${r.index}`);
+          skipped.push(t("no section at {index}", { index: r.index }));
           break;
         }
         const whole = target.data.length - target.data.length % r.stride;
@@ -693,7 +759,7 @@ function applyRepairs(input, repairs, ctx) {
           return combine(named(file, r.source.copyOf), k2?.mode ?? "last", k2?.size);
         })();
         if (!data) {
-          skipped.push(`nothing to write for ${r.name.trim()}`);
+          skipped.push(t("nothing to write for {name}", { name: r.name.trim() }));
           break;
         }
         const k = spec(r.name);
@@ -702,7 +768,7 @@ function applyRepairs(input, repairs, ctx) {
       }
       case "write":
         if (!target) {
-          skipped.push(`no section at ${r.index}`);
+          skipped.push(t("no section at {index}", { index: r.index }));
           break;
         }
         target.data = r.bytes.slice();
@@ -753,26 +819,180 @@ function fit(data, size, fill) {
   return out;
 }
 
+// ko.ts
+var KO = {
+  " (nothing changed)": " (\uBC14\uB010 \uAC83 \uC5C6\uC74C)",
+  " ({colour} is the first one carried over)": " (\uCC98\uC74C\uC73C\uB85C \uC774\uC5B4\uC9C4 \uC0C9\uC740 {colour})",
+  "0x12 and 0x13 move the text after them to the right or the centre of the line they are on, which rendered properly in 1.16.1, so {lines, plural, one {# line here is} other {# lines here are}} drawn in two or more places at once. Remastered does not draw them that way, and neither does this editor. Flattening drops the codes that split each line and joins its pieces left to right in the order they are written, keeping the colours and every word: the first would read {example}.": "0x12\uC640 0x13\uC740 \uADF8 \uB4A4\uC758 \uD14D\uC2A4\uD2B8\uB97C \uADF8 \uC904\uC758 \uC624\uB978\uCABD\uC774\uB098 \uAC00\uC6B4\uB370\uB85C \uC62E\uAE30\uBA70, 1.16.1\uC5D0\uC11C\uB294 \uC81C\uB300\uB85C \uADF8\uB824\uC84C\uC2B5\uB2C8\uB2E4. \uADF8\uB798\uC11C \uC5EC\uAE30 \uC788\uB294 {lines}\uC904\uC740 \uB450 \uAD70\uB370 \uC774\uC0C1\uC5D0 \uB3D9\uC2DC\uC5D0 \uADF8\uB824\uC9D1\uB2C8\uB2E4. \uB9AC\uB9C8\uC2A4\uD130\uB294 \uC774\uB807\uAC8C \uADF8\uB9AC\uC9C0 \uC54A\uACE0 \uC774 \uC5D0\uB514\uD130\uB3C4 \uB9C8\uCC2C\uAC00\uC9C0\uC785\uB2C8\uB2E4. \uD3BC\uCE58\uAE30\uB294 \uC904\uC744 \uB098\uB204\uB294 \uCF54\uB4DC\uB97C \uBE7C\uACE0 \uC870\uAC01\uC744 \uC4F0\uC778 \uC21C\uC11C\uB300\uB85C \uC67C\uCABD\uC5D0\uC11C \uC624\uB978\uCABD\uC73C\uB85C \uC787\uC2B5\uB2C8\uB2E4. \uC0C9\uACFC \uBAA8\uB4E0 \uB2E8\uC5B4\uB294 \uADF8\uB300\uB85C \uB0A8\uC2B5\uB2C8\uB2E4. \uCCAB \uBC88\uC9F8 \uBB38\uC790\uC5F4\uC740 {example}{example|\uC774} \uB429\uB2C8\uB2E4.",
+  "1.16.1 started every line in the default colour; Remastered carries the previous line's colour across the break, so {lines, plural, one {# line here is} other {# lines here are}} drawn in a colour the map never set{carried} \u2014 for example {example}. Writing the reset the old game supplied at the head of each of those lines makes both games draw the string alike, and changes nothing about what it says. Whether that is a repair depends on when the map was made: one written for Remastered may mean the colours it shows, so this is never ticked for you.": "1.16.1\uC740 \uBAA8\uB4E0 \uC904\uC744 \uAE30\uBCF8 \uC0C9\uC73C\uB85C \uC2DC\uC791\uD588\uC9C0\uB9CC, \uB9AC\uB9C8\uC2A4\uD130\uB294 \uC55E \uC904\uC758 \uC0C9\uC744 \uC904\uBC14\uAFC8 \uB108\uBA38\uB85C \uC774\uC5B4 \uAC11\uB2C8\uB2E4. \uADF8\uB798\uC11C \uC5EC\uAE30 \uC788\uB294 {lines}\uC904\uC740 \uB9F5\uC774 \uC815\uD55C \uC801 \uC5C6\uB294 \uC0C9\uC73C\uB85C \uADF8\uB824\uC9D1\uB2C8\uB2E4{carried}. \uC608: {example}. \uC61B \uAC8C\uC784\uC774 \uB123\uC5B4 \uC8FC\uB358 \uCD08\uAE30\uD654 \uCF54\uB4DC\uB97C \uADF8 \uC904\uB4E4\uC758 \uC55E\uC5D0 \uC368 \uB123\uC73C\uBA74 \uB450 \uAC8C\uC784\uC774 \uBB38\uC790\uC5F4\uC744 \uB611\uAC19\uC774 \uADF8\uB9AC\uBA70, \uB0B4\uC6A9\uC740 \uC870\uAE08\uB3C4 \uBC14\uB00C\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. \uC774\uAC83\uC774 \uBCF5\uAD6C\uC778\uC9C0\uB294 \uB9F5\uC774 \uC5B8\uC81C \uB9CC\uB4E4\uC5B4\uC84C\uB294\uC9C0\uC5D0 \uB2EC\uB824 \uC788\uC2B5\uB2C8\uB2E4. \uB9AC\uB9C8\uC2A4\uD130\uC6A9\uC73C\uB85C \uB9CC\uB4E0 \uB9F5\uC774\uB77C\uBA74 \uC9C0\uAE08 \uBCF4\uC774\uB294 \uC0C9\uC774 \uC758\uB3C4\uD55C \uAC83\uC77C \uC218 \uC788\uC73C\uBBC0\uB85C, \uC774 \uD56D\uBAA9\uC740 \uC808\uB300 \uC790\uB3D9\uC73C\uB85C \uCCB4\uD06C\uB418\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.",
+  "A negative length makes the game seek backwards and read earlier bytes again; the editor stops reading here and keeps the rest of the file as-is. Removing the header leaves what came before it.": "\uAE38\uC774\uAC00 \uC74C\uC218\uC774\uBA74 \uAC8C\uC784\uC740 \uB4A4\uB85C \uB3CC\uC544\uAC00 \uC55E\uC758 \uBC14\uC774\uD2B8\uB97C \uB2E4\uC2DC \uC77D\uC2B5\uB2C8\uB2E4. \uC5D0\uB514\uD130\uB294 \uC5EC\uAE30\uC11C \uC77D\uAE30\uB97C \uBA48\uCD94\uACE0 \uD30C\uC77C\uC758 \uB098\uBA38\uC9C0\uB97C \uADF8\uB300\uB85C \uB461\uB2C8\uB2E4. \uC774 \uD5E4\uB354\uB97C \uC9C0\uC6B0\uBA74 \uADF8 \uC55E\uC758 \uB0B4\uC6A9\uB9CC \uB0A8\uC2B5\uB2C8\uB2E4.",
+  "A repair rewrites the file and clears the undo history, as Section Explorer and Resize do.": "\uBCF5\uAD6C\uB294 \uC139\uC158 \uD0D0\uC0C9\uAE30\uB098 \uD06C\uAE30 \uC870\uC808\uCC98\uB7FC \uD30C\uC77C\uC744 \uB2E4\uC2DC \uC4F0\uACE0 \uC2E4\uD589 \uCDE8\uC18C \uAE30\uB85D\uC744 \uC9C0\uC6C1\uB2C8\uB2E4.",
+  "A section named {name} ({size} bytes)": "\uC774\uB984\uC774 {name}\uC778 \uC139\uC158 ({size}\uBC14\uC774\uD2B8)",
+  "A unit id past 227 or an owner past player 12 is nothing the game can place; it skips or misreads the record. Removing those records is the only clean repair, and it is data loss \u2014 look at them in the Units layer first.": "\uC720\uB2DB \uBC88\uD638\uAC00 227\uC744 \uB118\uAC70\uB098 \uC18C\uC720\uC790\uAC00 \uD50C\uB808\uC774\uC5B4 12\uB97C \uB118\uC73C\uBA74 \uAC8C\uC784\uC774 \uBC30\uCE58\uD560 \uC218 \uC5C6\uC5B4, \uADF8 \uB808\uCF54\uB4DC\uB97C \uAC74\uB108\uB6F0\uAC70\uB098 \uC798\uBABB \uC77D\uC2B5\uB2C8\uB2E4. \uADF8 \uB808\uCF54\uB4DC\uB97C \uC9C0\uC6B0\uB294 \uAC83\uC774 \uC720\uC77C\uD558\uAC8C \uAE54\uB054\uD55C \uBCF5\uAD6C\uC774\uC9C0\uB9CC \uB370\uC774\uD130\uAC00 \uC0AC\uB77C\uC9C0\uBBC0\uB85C, \uBA3C\uC800 \uC720\uB2DB \uB808\uC774\uC5B4\uC5D0\uC11C \uC0B4\uD3B4\uBCF4\uC138\uC694.",
+  "About {share}% of the map is terrain no diamond lattice describes": "\uB9F5\uC758 \uC57D {share}%\uB294 \uC5B4\uB5A4 \uB9C8\uB984\uBAA8 \uACA9\uC790\uB85C\uB3C4 \uB098\uD0C0\uB0BC \uC218 \uC5C6\uB294 \uC9C0\uD615\uC785\uB2C8\uB2E4",
+  "All": "\uC804\uCCB4",
+  "An unknown section {name} ({size} bytes)": "\uC54C \uC218 \uC5C6\uB294 \uC139\uC158 {name} ({size}\uBC14\uC774\uD2B8)",
+  "Check maps when they open": "\uB9F5\uC744 \uC5F4 \uB54C \uAC80\uC0AC",
+  "Checking the map\u2026": "\uB9F5 \uAC80\uC0AC \uC911\u2026",
+  "DIM says the map is {width} \xD7 {height} tiles": "DIM\uC5D0 \uC801\uD78C \uB9F5 \uD06C\uAE30\uAC00 {width} \xD7 {height} \uD0C0\uC77C\uC785\uB2C8\uB2E4",
+  "Done: {done}.": "\uC644\uB8CC: {done}.",
+  "ERA is {value}; the game uses {masked}": "ERA\uAC00 {value}\uC774\uC9C0\uB9CC \uAC8C\uC784\uC740 {masked}{masked|\uC73C\uB85C} \uC501\uB2C8\uB2E4",
+  "Every map StarEdit writes carries the same 1040-byte verification table; the game uses it to hash the player sections. A different table is a sign of a protector or another editor, and the map may still play. Restoring the standard table is what the editor writes for a new map.": "StarEdit\uC774 \uC4F0\uB294 \uBAA8\uB4E0 \uB9F5\uC5D0\uB294 \uAC19\uC740 1040\uBC14\uC774\uD2B8 \uAC80\uC99D \uD45C\uAC00 \uB4E4\uC5B4 \uC788\uACE0, \uAC8C\uC784\uC740 \uC774\uAC83\uC73C\uB85C \uD50C\uB808\uC774\uC5B4 \uC139\uC158\uC758 \uD574\uC2DC\uB97C \uAD6C\uD569\uB2C8\uB2E4. \uD45C\uAC00 \uB2E4\uB974\uBA74 \uBCF4\uD638 \uB3C4\uAD6C\uB098 \uB2E4\uB978 \uC5D0\uB514\uD130\uB97C \uAC70\uCCE4\uB2E4\uB294 \uB73B\uC774\uBA70, \uB9F5\uC740 \uC5EC\uC804\uD788 \uD50C\uB808\uC774\uB420 \uC218 \uC788\uC2B5\uB2C8\uB2E4. \uD45C\uC900 \uD45C\uB85C \uB418\uB3CC\uB9AC\uBA74 \uC5D0\uB514\uD130\uAC00 \uC0C8 \uB9F5\uC5D0 \uC4F0\uB294 \uAC83\uACFC \uAC19\uC544\uC9D1\uB2C8\uB2E4.",
+  "Every section is where the game expects it, at the size it reads, with nothing repeated or left over.": "\uBAA8\uB4E0 \uC139\uC158\uC774 \uAC8C\uC784\uC774 \uAE30\uB300\uD558\uB294 \uC790\uB9AC\uC5D0 \uAC8C\uC784\uC774 \uC77D\uB294 \uD06C\uAE30\uB85C \uC788\uACE0, \uBC18\uBCF5\uB418\uAC70\uB098 \uB0A8\uB294 \uAC83\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.",
+  "Fix string colours": "\uBB38\uC790\uC5F4 \uC0C9 \uACE0\uCE58\uAE30",
+  "Flatten stacked text": "\uACB9\uCE5C \uD14D\uC2A4\uD2B8 \uD3BC\uCE58\uAE30",
+  "Folding them into one section holds exactly what the game ends up with.": "\uD558\uB098\uC758 \uC139\uC158\uC73C\uB85C \uD569\uCE58\uBA74 \uAC8C\uC784\uC774 \uACB0\uAD6D \uC77D\uB294 \uB0B4\uC6A9\uACFC \uC815\uD655\uD788 \uAC19\uC544\uC9D1\uB2C8\uB2E4.",
+  "Hand-placed tiles, blends, or ground another editor laid. The lattice is already as close to the tiles as a rebuild can bring it, so there is nothing to repair; the isometric brush will not join up in those places, and the Rect, Tile and Blend brushes work as usual.": "\uC190\uC73C\uB85C \uB193\uC740 \uD0C0\uC77C, \uBE14\uB80C\uB4DC, \uB610\uB294 \uB2E4\uB978 \uC5D0\uB514\uD130\uAC00 \uAE50 \uB545\uC785\uB2C8\uB2E4. \uACA9\uC790\uB294 \uC774\uBBF8 \uB2E4\uC2DC \uB9CC\uB4E4\uC5B4\uC11C \uB9DE\uCD9C \uC218 \uC788\uB294 \uB9CC\uD07C \uD0C0\uC77C\uC5D0 \uAC00\uAE4C\uC6B0\uBBC0\uB85C \uBCF5\uAD6C\uD560 \uAC83\uC774 \uC5C6\uC2B5\uB2C8\uB2E4. \uADF8\uACF3\uC5D0\uC11C\uB294 \uC544\uC774\uC18C\uBA54\uD2B8\uB9AD \uBE0C\uB7EC\uC2DC\uAC00 \uC774\uC5B4\uC9C0\uC9C0 \uC54A\uC73C\uBA70, \uC0AC\uAC01\uD615, \uD0C0\uC77C, \uBE14\uB80C\uB4DC \uBE0C\uB7EC\uC2DC\uB294 \uD3C9\uC18C\uCC98\uB7FC \uB3D9\uC791\uD569\uB2C8\uB2E4.",
+  "ISOM brought back in step \u2014 {n, plural, one {# lattice value} other {# lattice values}} changed": "ISOM\uC744 \uD0C0\uC77C\uC5D0 \uB2E4\uC2DC \uB9DE\uCDA4 \u2014 \uACA9\uC790 \uAC12 {n}\uAC1C \uBC14\uB01C",
+  "ISOM is behind the tiles under about {share}% of the map": "\uB9F5\uC758 \uC57D {share}%\uC5D0\uC11C ISOM\uC774 \uD0C0\uC77C\uC744 \uB530\uB77C\uAC00\uC9C0 \uBABB\uD569\uB2C8\uB2E4",
+  "ISOM is {size} bytes; a {wanted}-byte lattice fits this map": "ISOM\uC774 {size}\uBC14\uC774\uD2B8\uC774\uC9C0\uB9CC \uC774 \uB9F5\uC5D0 \uB9DE\uB294 \uACA9\uC790\uB294 {wanted}\uBC14\uC774\uD2B8\uC785\uB2C8\uB2E4",
+  "ISOM rebuilt from the tiles \u2014 {n, plural, one {# diamond} other {# diamonds}}": "\uD0C0\uC77C\uC5D0\uC11C ISOM\uC744 \uB2E4\uC2DC \uB9CC\uB4E6 \u2014 \uB9C8\uB984\uBAA8 {n}\uAC1C",
+  "ISOM rebuilt from the tiles \u2014 {n, plural, one {# diamond} other {# diamonds}}, {guessed} guessed under doodads or off the edge": "\uD0C0\uC77C\uC5D0\uC11C ISOM\uC744 \uB2E4\uC2DC \uB9CC\uB4E6 \u2014 \uB9C8\uB984\uBAA8 {n}\uAC1C, \uC7A5\uC2DD\uBB3C \uC544\uB798\uB098 \uAC00\uC7A5\uC790\uB9AC \uBC16\uC758 {guessed}\uAC1C\uB294 \uCD94\uC815",
+  "No ISOM section \u2014 the isometric brush is off": "ISOM \uC139\uC158 \uC5C6\uC74C \u2014 \uC544\uC774\uC18C\uBA54\uD2B8\uB9AD \uBE0C\uB7EC\uC2DC\uB97C \uC4F8 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4",
+  "None": "\uC5C6\uC74C",
+  "Nothing the plugin can do about this one": "\uD50C\uB7EC\uADF8\uC778\uC774 \uC774 \uD56D\uBAA9\uC5D0 \uD560 \uC218 \uC788\uB294 \uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4",
+  "Nothing to repair.": "\uBCF5\uAD6C\uD560 \uAC83\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.",
+  "OWNR holds an unknown player type for {players}": "OWNR\uC5D0 {players}\uC758 \uC54C \uC218 \uC5C6\uB294 \uD50C\uB808\uC774\uC5B4 \uC720\uD615\uC774 \uC788\uC2B5\uB2C8\uB2E4",
+  "Only the low three bits pick the tileset, and some protectors set the rest. Writing the value the game uses changes nothing it draws.": "\uD0C0\uC77C\uC14B\uC740 \uC544\uB798\uCABD \uC138 \uBE44\uD2B8\uB85C\uB9CC \uC815\uD574\uC9C0\uBA70, \uC77C\uBD80 \uBCF4\uD638 \uB3C4\uAD6C\uAC00 \uB098\uBA38\uC9C0 \uBE44\uD2B8\uB97C \uCC44\uC6C1\uB2C8\uB2E4. \uAC8C\uC784\uC774 \uC4F0\uB294 \uAC12\uC744 \uC368 \uB123\uC5B4\uB3C4 \uADF8\uB824\uC9C0\uB294 \uAC83\uC740 \uBC14\uB00C\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.",
+  "Optional \u2014 read the note first": "\uC120\uD0DD \u2014 \uBA3C\uC800 \uC124\uBA85\uC744 \uC77D\uC73C\uC138\uC694",
+  "Player types run 0 to 7 (inactive, computer, human, rescuable, neutral). Setting the unknown ones to inactive takes those slots out of the game; Scenario \u25B8 Player Settings can put them back.": "\uD50C\uB808\uC774\uC5B4 \uC720\uD615\uC740 0\uBD80\uD130 7\uAE4C\uC9C0\uC785\uB2C8\uB2E4 (\uBE44\uD65C\uC131, \uCEF4\uD4E8\uD130, \uC0AC\uB78C, \uAD6C\uC870 \uAC00\uB2A5, \uC911\uB9BD). \uC54C \uC218 \uC5C6\uB294 \uAC83\uC744 \uBE44\uD65C\uC131\uC73C\uB85C \uBC14\uAFB8\uBA74 \uADF8 \uC2AC\uB86F\uC740 \uAC8C\uC784\uC5D0\uC11C \uBE60\uC9D1\uB2C8\uB2E4. \uC2DC\uB098\uB9AC\uC624 \u25B8 \uD50C\uB808\uC774\uC5B4 \uC124\uC815\uC5D0\uC11C \uB418\uB3CC\uB9B4 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
+  "Put the file back as it was when it opened": "\uD30C\uC77C\uC744 \uC5F4\uC5C8\uC744 \uB54C \uC0C1\uD0DC\uB85C \uB418\uB3CC\uB9BD\uB2C8\uB2E4",
+  "Races run 0 to 7 (Zerg, Terran, Protoss, user-selectable, random, inactive). Setting the unknown ones to inactive; Scenario \u25B8 Player Settings can change them.": "\uC885\uC871\uC740 0\uBD80\uD130 7\uAE4C\uC9C0\uC785\uB2C8\uB2E4 (\uC800\uADF8, \uD14C\uB780, \uD504\uB85C\uD1A0\uC2A4, \uC0AC\uC6A9\uC790 \uC120\uD0DD, \uBB34\uC791\uC704, \uBE44\uD65C\uC131). \uC54C \uC218 \uC5C6\uB294 \uAC83\uC740 \uBE44\uD65C\uC131\uC73C\uB85C \uBC14\uAFC9\uB2C8\uB2E4. \uC2DC\uB098\uB9AC\uC624 \u25B8 \uD50C\uB808\uC774\uC5B4 \uC124\uC815\uC5D0\uC11C \uBC14\uAFC0 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
+  "Reads each map as it opens and shows the Repair dialog when something is missing or damaged. Off, Tools \u25B8 Repair Map\u2026 still runs the check.": "\uB9F5\uC744 \uC5F4 \uB54C\uB9C8\uB2E4 \uC77D\uC5B4 \uBCF4\uACE0, \uBE60\uC9C0\uAC70\uB098 \uC190\uC0C1\uB41C \uAC83\uC774 \uC788\uC73C\uBA74 \uBCF5\uAD6C \uB300\uD654 \uC0C1\uC790\uB97C \uB744\uC6C1\uB2C8\uB2E4. \uAEBC \uB450\uC5B4\uB3C4 \uB3C4\uAD6C \u25B8 \uB9F5 \uBCF5\uAD6C\u2026\uB85C \uAC80\uC0AC\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
+  "Rebuild ISOM": "ISOM \uB2E4\uC2DC \uB9CC\uB4E4\uAE30",
+  "Recommended": "\uAD8C\uC7A5",
+  "Records are {stride} bytes each; the game reads whole ones and drops the remainder. Trimming does the same.": "\uB808\uCF54\uB4DC\uB294 \uAC01\uAC01 {stride}\uBC14\uC774\uD2B8\uC774\uACE0, \uAC8C\uC784\uC740 \uC628\uC804\uD55C \uB808\uCF54\uB4DC\uB9CC \uC77D\uACE0 \uB098\uBA38\uC9C0\uB294 \uBC84\uB9BD\uB2C8\uB2E4. \uC798\uB77C \uB0B4\uAE30\uB3C4 \uB611\uAC19\uC774 \uD569\uB2C8\uB2E4.",
+  "Repair": "\uBCF5\uAD6C",
+  "Repair Map": "\uB9F5 \uBCF5\uAD6C",
+  "Repair Map\u2026": "\uB9F5 \uBCF5\uAD6C\u2026",
+  "Repair failed: {error}": "\uBCF5\uAD6C \uC2E4\uD328: {error}",
+  "Repair {n} selected": "\uC120\uD0DD\uD55C {n}\uAC1C \uBCF5\uAD6C",
+  "Repair: nothing wrong with {name}; {n, plural, one {# note} other {# notes}} (Tools \u25B8 Repair Map\u2026).": "\uBCF5\uAD6C: {name}\uC5D0 \uBB38\uC81C\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4. \uCC38\uACE0 {n}\uAC1C (\uB3C4\uAD6C \u25B8 \uB9F5 \uBCF5\uAD6C\u2026).",
+  "Repair: {done}.": "\uBCF5\uAD6C: {done}.",
+  "Repair: {name} restored to the file that was opened.": "\uBCF5\uAD6C: {name}{name|\uC744} \uCC98\uC74C \uC5F0 \uD30C\uC77C\uB85C \uB418\uB3CC\uB838\uC2B5\uB2C8\uB2E4.",
+  "Repairing\u2026": "\uBCF5\uAD6C \uC911\u2026",
+  "Restore original": "\uC6D0\uBCF8 \uBCF5\uC6D0",
+  "Restoring the original\u2026": "\uC6D0\uBCF8 \uBCF5\uC6D0 \uC911\u2026",
+  "SIDE holds an unknown race for {players}": "SIDE\uC5D0 {players}\uC758 \uC54C \uC218 \uC5C6\uB294 \uC885\uC871\uC774 \uC788\uC2B5\uB2C8\uB2E4",
+  "Still reported after the last repair.": "\uB9C8\uC9C0\uB9C9 \uBCF5\uAD6C \uB4A4\uC5D0\uB3C4 \uC5EC\uC804\uD788 \uBCF4\uACE0\uB429\uB2C8\uB2E4.",
+  "TILE and MTXM differ on {differ} of {cells} tiles": "TILE\uACFC MTXM\uC774 \uD0C0\uC77C {cells}\uAC1C \uC911 {differ}\uAC1C\uC5D0\uC11C \uB2E4\uB985\uB2C8\uB2E4",
+  "TILE is blank: the editor's terrain layer was zeroed": "TILE\uC774 \uBE44\uC5B4 \uC788\uC2B5\uB2C8\uB2E4: \uC5D0\uB514\uD130\uC758 \uC9C0\uD615 \uB808\uC774\uC5B4\uAC00 0\uC73C\uB85C \uC9C0\uC6CC\uC84C\uC2B5\uB2C8\uB2E4",
+  "TILE is missing (the editor's terrain layer)": "TILE\uC774 \uC5C6\uC2B5\uB2C8\uB2E4 (\uC5D0\uB514\uD130\uC758 \uC9C0\uD615 \uB808\uC774\uC5B4)",
+  "TILE is the ground without doodads, so the two differ under every doodad, and that is normal. Where they differ everywhere else, TILE was edited by another tool. Copying MTXM over it makes them agree; the doodads' own records stay.": "TILE\uC740 \uC7A5\uC2DD\uBB3C\uC744 \uBE80 \uB545\uC774\uBBC0\uB85C \uC7A5\uC2DD\uBB3C\uB9C8\uB2E4 \uADF8 \uC544\uB798\uC5D0\uC11C \uB458\uC774 \uB2E4\uB978 \uAC83\uC740 \uC815\uC0C1\uC785\uB2C8\uB2E4. \uADF8 \uBC16\uC758 \uACF3\uC5D0\uC11C \uB2E4\uB974\uB2E4\uBA74 TILE\uC744 \uB2E4\uB978 \uB3C4\uAD6C\uB85C \uACE0\uCE5C \uAC83\uC785\uB2C8\uB2E4. MTXM\uC744 \uB36E\uC5B4\uC4F0\uBA74 \uB458\uC774 \uAC19\uC544\uC9C0\uBA70, \uC7A5\uC2DD\uBB3C \uB808\uCF54\uB4DC\uB294 \uADF8\uB300\uB85C \uB0A8\uC2B5\uB2C8\uB2E4.",
+  "TYPE is {value}, not RAWS or RAWB": "TYPE\uC774 RAWS\uB098 RAWB\uAC00 \uC544\uB2CC {value}\uC785\uB2C8\uB2E4",
+  "Terrain edited with the Rect or Tile brush, or by another tool, left the lattice behind; isometric strokes near there will not join up. Rebuilding it from the tiles brings that {share}% back in step, and leaves about {leftover}% that no diamond lattice describes. One undo step.": "\uC0AC\uAC01\uD615\uC774\uB098 \uD0C0\uC77C \uBE0C\uB7EC\uC2DC, \uB610\uB294 \uB2E4\uB978 \uB3C4\uAD6C\uB85C \uACE0\uCE5C \uC9C0\uD615\uC744 \uACA9\uC790\uAC00 \uB530\uB77C\uAC00\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uADF8 \uADFC\uCC98\uC5D0\uC11C\uB294 \uC544\uC774\uC18C\uBA54\uD2B8\uB9AD \uBE0C\uB7EC\uC2DC\uAC00 \uC774\uC5B4\uC9C0\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. \uD0C0\uC77C\uC5D0\uC11C \uB2E4\uC2DC \uB9CC\uB4E4\uBA74 \uADF8 {share}%\uAC00 \uB2E4\uC2DC \uB9DE\uCDB0\uC9C0\uACE0, \uC5B4\uB5A4 \uB9C8\uB984\uBAA8 \uACA9\uC790\uB85C\uB3C4 \uB098\uD0C0\uB0BC \uC218 \uC5C6\uB294 \uC57D {leftover}%\uAC00 \uB0A8\uC2B5\uB2C8\uB2E4. \uC2E4\uD589 \uCDE8\uC18C \uD55C \uB2E8\uACC4\uC785\uB2C8\uB2E4.",
+  "Terrain edited with the Rect or Tile brush, or by another tool, left the lattice behind; isometric strokes near there will not join up. Rebuilding it from the tiles brings that {share}% back in step. One undo step.": "\uC0AC\uAC01\uD615\uC774\uB098 \uD0C0\uC77C \uBE0C\uB7EC\uC2DC, \uB610\uB294 \uB2E4\uB978 \uB3C4\uAD6C\uB85C \uACE0\uCE5C \uC9C0\uD615\uC744 \uACA9\uC790\uAC00 \uB530\uB77C\uAC00\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uADF8 \uADFC\uCC98\uC5D0\uC11C\uB294 \uC544\uC774\uC18C\uBA54\uD2B8\uB9AD \uBE0C\uB7EC\uC2DC\uAC00 \uC774\uC5B4\uC9C0\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. \uD0C0\uC77C\uC5D0\uC11C \uB2E4\uC2DC \uB9CC\uB4E4\uBA74 \uADF8 {share}%\uAC00 \uB2E4\uC2DC \uB9DE\uCDB0\uC9D1\uB2C8\uB2E4. \uC2E4\uD589 \uCDE8\uC18C \uD55C \uB2E8\uACC4\uC785\uB2C8\uB2E4.",
+  "The file is back as it was when it opened.": "\uD30C\uC77C\uC744 \uC5F4\uC5C8\uC744 \uB54C \uC0C1\uD0DC\uB85C \uB418\uB3CC\uB838\uC2B5\uB2C8\uB2E4.",
+  "The game checks it against the version it is running. {wanted} is what StarEdit writes for this file's VER.": "\uAC8C\uC784\uC740 \uC774\uAC83\uC744 \uC2E4\uD589 \uC911\uC778 \uBC84\uC804\uACFC \uB300\uC870\uD569\uB2C8\uB2E4. \uC774 \uD30C\uC77C\uC758 VER\uC5D0 \uB300\uD574 StarEdit\uC774 \uC4F0\uB294 \uAC12\uC740 {wanted}\uC785\uB2C8\uB2E4.",
+  "The game copies each occurrence over the front of one buffer in file order, so a later short one changes only its first bytes.": "\uAC8C\uC784\uC740 \uAC01 \uC0AC\uBCF8\uC744 \uD30C\uC77C \uC21C\uC11C\uB300\uB85C \uD558\uB098\uC758 \uBC84\uD37C \uC55E\uBD80\uBD84\uC5D0 \uB36E\uC5B4\uC4F0\uBBC0\uB85C, \uB4A4\uC5D0 \uC624\uB294 \uC9E7\uC740 \uC0AC\uBCF8\uC740 \uC55E\uCABD \uBC14\uC774\uD2B8\uB9CC \uBC14\uAFC9\uB2C8\uB2E4.",
+  "The game copies each occurrence over the front of one {size}-byte buffer in file order, so a later short one changes only its first bytes.": "\uAC8C\uC784\uC740 \uAC01 \uC0AC\uBCF8\uC744 \uD30C\uC77C \uC21C\uC11C\uB300\uB85C {size}\uBC14\uC774\uD2B8 \uBC84\uD37C \uD558\uB098\uC758 \uC55E\uBD80\uBD84\uC5D0 \uB36E\uC5B4\uC4F0\uBBC0\uB85C, \uB4A4\uC5D0 \uC624\uB294 \uC9E7\uC740 \uC0AC\uBCF8\uC740 \uC55E\uCABD \uBC14\uC774\uD2B8\uB9CC \uBC14\uAFC9\uB2C8\uB2E4.",
+  "The game decides which settings sections to read from it. Scenario \u25B8 Map Revision sets a known one once the map is open.": "\uAC8C\uC784\uC740 \uC774 \uAC12\uC73C\uB85C \uC5B4\uB5A4 \uC124\uC815 \uC139\uC158\uC744 \uC77D\uC744\uC9C0 \uC815\uD569\uB2C8\uB2E4. \uB9F5\uC774 \uC5F4\uB9B0 \uB4A4 \uC2DC\uB098\uB9AC\uC624 \u25B8 \uB9F5 \uBC84\uC804\uC5D0\uC11C \uC54C\uB824\uC9C4 \uAC12\uC73C\uB85C \uC815\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
+  "The game draws MTXM and never reads TILE, so protectors strip it. The editor's terrain brushes work on both; copying MTXM into a new TILE gives them the ground back (doodads included, which TILE normally leaves out).": "\uAC8C\uC784\uC740 MTXM\uC744 \uADF8\uB9AC\uACE0 TILE\uC740 \uC77D\uC9C0 \uC54A\uC73C\uBBC0\uB85C \uBCF4\uD638 \uB3C4\uAD6C\uAC00 \uC774\uAC83\uC744 \uC5C6\uC571\uB2C8\uB2E4. \uC5D0\uB514\uD130\uC758 \uC9C0\uD615 \uBE0C\uB7EC\uC2DC\uB294 \uB458 \uB2E4\uC5D0 \uC791\uC6A9\uD569\uB2C8\uB2E4. MTXM\uC744 \uC0C8 TILE\uB85C \uBCF5\uC0AC\uD558\uBA74 \uBE0C\uB7EC\uC2DC\uAC00 \uB545\uC744 \uB418\uCC3E\uC2B5\uB2C8\uB2E4 (TILE\uC774 \uBCF4\uD1B5 \uBE7C\uB294 \uC7A5\uC2DD\uBB3C\uB3C4 \uD3EC\uD568\uB429\uB2C8\uB2E4).",
+  "The game draws MTXM and never reads TILE, so protectors zero it. Copying MTXM over it gives the terrain brushes the ground back (doodads included, which TILE normally leaves out).": "\uAC8C\uC784\uC740 MTXM\uC744 \uADF8\uB9AC\uACE0 TILE\uC740 \uC77D\uC9C0 \uC54A\uC73C\uBBC0\uB85C \uBCF4\uD638 \uB3C4\uAD6C\uAC00 \uC774\uAC83\uC744 0\uC73C\uB85C \uC9C0\uC6C1\uB2C8\uB2E4. MTXM\uC744 \uB36E\uC5B4\uC4F0\uBA74 \uC9C0\uD615 \uBE0C\uB7EC\uC2DC\uAC00 \uB545\uC744 \uB418\uCC3E\uC2B5\uB2C8\uB2E4 (TILE\uC774 \uBCF4\uD1B5 \uBE7C\uB294 \uC7A5\uC2DD\uBB3C\uB3C4 \uD3EC\uD568\uB429\uB2C8\uB2E4).",
+  "The game ignores a section it does not know, and this one holds nothing \u2014 what a header with a negative length leaves behind once the editor has read the file. Removing it loses nothing.": "\uAC8C\uC784\uC740 \uBAA8\uB974\uB294 \uC139\uC158\uC744 \uBB34\uC2DC\uD558\uBA70, \uC774 \uC139\uC158\uC740 \uBE44\uC5B4 \uC788\uC2B5\uB2C8\uB2E4. \uAE38\uC774\uAC00 \uC74C\uC218\uC778 \uD5E4\uB354\uB97C \uC5D0\uB514\uD130\uAC00 \uC77D\uACE0 \uB098\uBA74 \uB0A8\uB294 \uAC83\uC785\uB2C8\uB2E4. \uC9C0\uC6CC\uB3C4 \uC783\uB294 \uAC83\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.",
+  "The game ignores a section it does not know, but this one's name is not even text \u2014 a marker left by a protector or damage. Removing it drops those bytes.": "\uAC8C\uC784\uC740 \uBAA8\uB974\uB294 \uC139\uC158\uC744 \uBB34\uC2DC\uD558\uC9C0\uB9CC, \uC774 \uC139\uC158\uC740 \uC774\uB984\uC870\uCC28 \uD14D\uC2A4\uD2B8\uAC00 \uC544\uB2D9\uB2C8\uB2E4. \uBCF4\uD638 \uB3C4\uAD6C\uAC00 \uB0A8\uAE34 \uD45C\uC2DC\uC774\uAC70\uB098 \uC190\uC0C1\uC785\uB2C8\uB2E4. \uC9C0\uC6B0\uBA74 \uADF8 \uBC14\uC774\uD2B8\uAC00 \uC5C6\uC5B4\uC9D1\uB2C8\uB2E4.",
+  "The game ignores a section it does not know; some editors keep their own data this way. It is left in place.": "\uAC8C\uC784\uC740 \uBAA8\uB974\uB294 \uC139\uC158\uC744 \uBB34\uC2DC\uD569\uB2C8\uB2E4. \uC77C\uBD80 \uC5D0\uB514\uD130\uB294 \uC774\uB807\uAC8C \uC790\uAE30 \uB370\uC774\uD130\uB97C \uBCF4\uAD00\uD569\uB2C8\uB2E4. \uADF8\uB300\uB85C \uB461\uB2C8\uB2E4.",
+  "The game keeps every occurrence's records, in file order.": "\uAC8C\uC784\uC740 \uD30C\uC77C \uC21C\uC11C\uB300\uB85C \uBAA8\uB4E0 \uC0AC\uBCF8\uC758 \uB808\uCF54\uB4DC\uB97C \uC720\uC9C0\uD569\uB2C8\uB2E4.",
+  "The game never reads ISOM; it is the editor's record of the terrain lattice, and protectors strip it. Rebuilding it from the tiles is exact for terrain laid down isometrically and a best guess under doodads and for hand-placed tiles. One undo step.": "\uAC8C\uC784\uC740 ISOM\uC744 \uC77D\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. ISOM\uC740 \uC5D0\uB514\uD130\uAC00 \uC9C0\uD615 \uACA9\uC790\uB97C \uAE30\uB85D\uD55C \uAC83\uC774\uBA70, \uBCF4\uD638 \uB3C4\uAD6C\uAC00 \uC5C6\uC571\uB2C8\uB2E4. \uD0C0\uC77C\uC5D0\uC11C \uB2E4\uC2DC \uB9CC\uB4E4\uBA74 \uC544\uC774\uC18C\uBA54\uD2B8\uB9AD\uC73C\uB85C \uAE50 \uC9C0\uD615\uC740 \uC815\uD655\uD558\uACE0, \uC7A5\uC2DD\uBB3C \uC544\uB798\uC640 \uC190\uC73C\uB85C \uB193\uC740 \uD0C0\uC77C\uC740 \uCD5C\uC120\uC758 \uCD94\uC815\uC785\uB2C8\uB2E4. \uC2E4\uD589 \uCDE8\uC18C \uD55C \uB2E8\uACC4\uC785\uB2C8\uB2E4.",
+  "The game never reads ISOM; it is the editor's record of the terrain lattice. Rebuilding it from the tiles needs the tileset graphics, which are not loaded.": "\uAC8C\uC784\uC740 ISOM\uC744 \uC77D\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. ISOM\uC740 \uC5D0\uB514\uD130\uAC00 \uC9C0\uD615 \uACA9\uC790\uB97C \uAE30\uB85D\uD55C \uAC83\uC785\uB2C8\uB2E4. \uD0C0\uC77C\uC5D0\uC11C \uB2E4\uC2DC \uB9CC\uB4E4\uB824\uBA74 \uD0C0\uC77C\uC14B \uADF8\uB798\uD53D\uC774 \uD544\uC694\uD55C\uB370, \uBD88\uB7EC\uC624\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4.",
+  "The game reads no strings from it. Rebuilding writes the table the editor holds (every string it could read).": "\uAC8C\uC784\uC740 \uC5EC\uAE30\uC11C \uBB38\uC790\uC5F4\uC744 \uD558\uB098\uB3C4 \uC77D\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uB9CC\uB4E4\uBA74 \uC5D0\uB514\uD130\uAC00 \uAC00\uC9C4 \uD45C(\uC77D\uC744 \uC218 \uC788\uC5C8\uB358 \uBAA8\uB4E0 \uBB38\uC790\uC5F4)\uB97C \uC501\uB2C8\uB2E4.",
+  "The game reads the first bytes and ignores the rest. Cutting the section to that size drops what it never sees.": "\uAC8C\uC784\uC740 \uC55E\uCABD \uBC14\uC774\uD2B8\uB9CC \uC77D\uACE0 \uB098\uBA38\uC9C0\uB294 \uBB34\uC2DC\uD569\uB2C8\uB2E4. \uC139\uC158\uC744 \uADF8 \uD06C\uAE30\uB85C \uC790\uB974\uBA74 \uAC8C\uC784\uC774 \uBCF4\uC9C0 \uC54A\uB294 \uBD80\uBD84\uB9CC \uC5C6\uC5B4\uC9D1\uB2C8\uB2E4.",
+  "The game reads them in any order. Putting them in the order StarEdit writes them makes the file look like one it saved; unknown sections go to the end.": "\uAC8C\uC784\uC740 \uC21C\uC11C\uC640 \uC0C1\uAD00\uC5C6\uC774 \uC77D\uC2B5\uB2C8\uB2E4. StarEdit\uC774 \uC4F0\uB294 \uC21C\uC11C\uB85C \uB193\uC73C\uBA74 StarEdit\uC774 \uC800\uC7A5\uD55C \uD30C\uC77C\uCC98\uB7FC \uBCF4\uC785\uB2C8\uB2E4. \uC54C \uC218 \uC5C6\uB294 \uC139\uC158\uC740 \uB9E8 \uB4A4\uB85C \uAC11\uB2C8\uB2E4.",
+  "The game reads what is there and stops. Declaring the length the section really has makes the file say the same thing.": "\uAC8C\uC784\uC740 \uC788\uB294 \uB9CC\uD07C \uC77D\uACE0 \uBA48\uCDA5\uB2C8\uB2E4. \uC139\uC158\uC758 \uC2E4\uC81C \uAE38\uC774\uB97C \uC801\uC5B4 \uB450\uBA74 \uD30C\uC77C\uB3C4 \uAC19\uC740 \uB0B4\uC6A9\uC744 \uB9D0\uD558\uAC8C \uB429\uB2C8\uB2E4.",
+  "The game reads what is there into a zeroed buffer (fog everywhere for the missing part). Padding the section to the full size writes those bytes out.": "\uAC8C\uC784\uC740 \uC788\uB294 \uB9CC\uD07C\uC744 0\uC73C\uB85C \uCC44\uC6B4 \uBC84\uD37C\uC5D0 \uC77D\uC2B5\uB2C8\uB2E4 (\uBE60\uC9C4 \uBD80\uBD84\uC740 \uBAA8\uB450 \uC548\uAC1C). \uC139\uC158\uC744 \uC804\uCCB4 \uD06C\uAE30\uB85C \uCC44\uC6B0\uBA74 \uADF8 \uBC14\uC774\uD2B8\uB97C \uC2E4\uC81C\uB85C \uC368 \uB123\uC2B5\uB2C8\uB2E4.",
+  "The game reads what is there into a zeroed buffer. Padding the section to the full size writes those bytes out.": "\uAC8C\uC784\uC740 \uC788\uB294 \uB9CC\uD07C\uC744 0\uC73C\uB85C \uCC44\uC6B4 \uBC84\uD37C\uC5D0 \uC77D\uC2B5\uB2C8\uB2E4. \uC139\uC158\uC744 \uC804\uCCB4 \uD06C\uAE30\uB85C \uCC44\uC6B0\uBA74 \uADF8 \uBC14\uC774\uD2B8\uB97C \uC2E4\uC81C\uB85C \uC368 \uB123\uC2B5\uB2C8\uB2E4.",
+  "The game shows those strings empty (or reads garbage). Rebuilding writes the table the editor holds: every string it could read, each offset in range.": "\uAC8C\uC784\uC740 \uADF8 \uBB38\uC790\uC5F4\uC744 \uBE44\uC5B4 \uC788\uAC8C \uBCF4\uC5EC \uC8FC\uAC70\uB098 \uC4F0\uB808\uAE30 \uAC12\uC744 \uC77D\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uB9CC\uB4E4\uBA74 \uC5D0\uB514\uD130\uAC00 \uAC00\uC9C4 \uD45C\uB97C \uC501\uB2C8\uB2E4. \uC77D\uC744 \uC218 \uC788\uC5C8\uB358 \uBAA8\uB4E0 \uBB38\uC790\uC5F4\uACFC \uBC94\uC704 \uC548\uC758 \uC624\uD504\uC14B\uC785\uB2C8\uB2E4.",
+  "The game takes maps from 1 \xD7 1 to 256 \xD7 256. The true size cannot be read off the file; Scenario \u25B8 Resize sets it once the map is open.": "\uAC8C\uC784\uC740 1 \xD7 1\uBD80\uD130 256 \xD7 256\uAE4C\uC9C0\uC758 \uB9F5\uC744 \uBC1B\uC2B5\uB2C8\uB2E4. \uC2E4\uC81C \uD06C\uAE30\uB294 \uD30C\uC77C\uC5D0\uC11C \uC54C \uC218 \uC5C6\uC73C\uB2C8, \uB9F5\uC774 \uC5F4\uB9B0 \uB4A4 \uC2DC\uB098\uB9AC\uC624 \u25B8 \uD06C\uAE30 \uC870\uC808\uC5D0\uC11C \uC815\uD558\uC138\uC694.",
+  "The game uses the first occurrence and ignores the rest.": "\uAC8C\uC784\uC740 \uCCAB \uBC88\uC9F8 \uAC83\uC744 \uC4F0\uACE0 \uB098\uBA38\uC9C0\uB294 \uBB34\uC2DC\uD569\uB2C8\uB2E4.",
+  "The game uses the last occurrence and ignores the rest.": "\uAC8C\uC784\uC740 \uB9C8\uC9C0\uB9C9 \uAC83\uC744 \uC4F0\uACE0 \uB098\uBA38\uC9C0\uB294 \uBB34\uC2DC\uD569\uB2C8\uB2E4.",
+  "The game will not load a map without it. Adding the section on StarEdit's defaults makes the file loadable; the data it held is gone.": "\uC774 \uC139\uC158\uC774 \uC5C6\uC73C\uBA74 \uAC8C\uC784\uC774 \uB9F5\uC744 \uBD88\uB7EC\uC624\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. StarEdit \uAE30\uBCF8\uAC12\uC73C\uB85C \uC139\uC158\uC744 \uCD94\uAC00\uD558\uBA74 \uBD88\uB7EC\uC62C \uC218 \uC788\uAC8C \uB418\uC9C0\uB9CC, \uC6D0\uB798 \uB4E4\uC5B4 \uC788\uB358 \uB370\uC774\uD130\uB294 \uC0AC\uB77C\uC84C\uC2B5\uB2C8\uB2E4.",
+  "The game will not load a map without it. TILE \u2014 the editor's copy of the terrain \u2014 is here, so the terrain can be restored from it.": "\uC774 \uC139\uC158\uC774 \uC5C6\uC73C\uBA74 \uAC8C\uC784\uC774 \uB9F5\uC744 \uBD88\uB7EC\uC624\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. \uC5D0\uB514\uD130\uC6A9 \uC9C0\uD615 \uC0AC\uBCF8\uC778 TILE\uC774 \uC788\uC73C\uBBC0\uB85C \uC5EC\uAE30\uC11C \uC9C0\uD615\uC744 \uB418\uC0B4\uB9B4 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
+  "The sections are not in StarEdit's order": "\uC139\uC158\uC774 StarEdit \uC21C\uC11C\uAC00 \uC544\uB2D9\uB2C8\uB2E4",
+  "They are not sections; the game never reads them and Save writes them back unchanged. Dropping them loses nothing the game uses.": "\uC139\uC158\uC774 \uC544\uB2D9\uB2C8\uB2E4. \uAC8C\uC784\uC740 \uC77D\uC9C0 \uC54A\uACE0, \uC800\uC7A5\uD558\uBA74 \uADF8\uB300\uB85C \uB2E4\uC2DC \uC501\uB2C8\uB2E4. \uBC84\uB824\uB3C4 \uAC8C\uC784\uC774 \uC4F0\uB294 \uAC83\uC740 \uC783\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.",
+  "They follow a header the reader could not act on, so neither the game nor the editor sees them as sections. Recovering them appends them as sections in their own right.": "\uC77D\uC744 \uC218 \uC5C6\uB294 \uD5E4\uB354 \uB4A4\uC5D0 \uC788\uC5B4\uC11C \uAC8C\uC784\uB3C4 \uC5D0\uB514\uD130\uB3C4 \uC139\uC158\uC73C\uB85C \uBCF4\uC9C0 \uBABB\uD569\uB2C8\uB2E4. \uB418\uC0B4\uB9AC\uBA74 \uC628\uC804\uD55C \uC139\uC158\uC73C\uB85C \uB4A4\uC5D0 \uB367\uBD99\uC785\uB2C8\uB2E4.",
+  "Tick the repairs that only write what the game already does, or restore what the editor needs": "\uAC8C\uC784\uC774 \uC774\uBBF8 \uD558\uB294 \uB300\uB85C\uB9CC \uC4F0\uAC70\uB098 \uC5D0\uB514\uD130\uC5D0 \uD544\uC694\uD55C \uAC83\uC744 \uB418\uC0B4\uB9AC\uB294 \uBCF5\uAD6C\uB97C \uCCB4\uD06C\uD569\uB2C8\uB2E4",
+  "VCOD is not StarEdit's table": "VCOD\uAC00 StarEdit\uC758 \uD45C\uAC00 \uC544\uB2D9\uB2C8\uB2E4",
+  "VER is {version}, not a version StarEdit writes (59, 63, 205, 206)": "VER\uC774 {version}{version|\uC73C\uB85C}, StarEdit\uC774 \uC4F0\uB294 \uBC84\uC804(59, 63, 205, 206)\uC774 \uC544\uB2D9\uB2C8\uB2E4",
+  "chunk at {offset}": "{offset} \uC704\uCE58\uC758 \uCCAD\uD06C",
+  "error": "\uC624\uB958",
+  "file": "\uD30C\uC77C",
+  "no section at {index}": "{index}\uBC88 \uC139\uC158 \uC5C6\uC74C",
+  "no string stacked text on a line": "\uD55C \uC904\uC5D0 \uD14D\uC2A4\uD2B8\uB97C \uACB9\uCE5C \uBB38\uC790\uC5F4 \uC5C6\uC74C",
+  "no trailing bytes": "\uB4A4\uC5D0 \uB0A8\uB294 \uBC14\uC774\uD2B8 \uC5C6\uC74C",
+  "note": "\uCC38\uACE0",
+  "nothing to rebuild": "\uB2E4\uC2DC \uB9CC\uB4E4 \uAC83 \uC5C6\uC74C",
+  "nothing to write for {name}": "{name}\uC5D0 \uC4F8 \uAC83 \uC5C6\uC74C",
+  "player {n}": "\uD50C\uB808\uC774\uC5B4 {n}",
+  "players {list}": "\uD50C\uB808\uC774\uC5B4 {list}",
+  "required": "\uD544\uC218",
+  "skipped: {why}": "\uAC74\uB108\uB700: {why}",
+  "the ISOM could not be rebuilt (tileset graphics not loaded)": "ISOM\uC744 \uB2E4\uC2DC \uB9CC\uB4E4 \uC218 \uC5C6\uC74C (\uD0C0\uC77C\uC14B \uADF8\uB798\uD53D\uC744 \uBD88\uB7EC\uC624\uC9C0 \uC54A\uC74C)",
+  "the file": "\uD30C\uC77C \uC804\uCCB4",
+  "the lattice was already the closest fit the tiles allow": "\uACA9\uC790\uAC00 \uC774\uBBF8 \uD0C0\uC77C\uC5D0 \uAC00\uC7A5 \uAC00\uAE5D\uAC8C \uB9DE\uCDB0\uC838 \uC788\uC74C",
+  "the map": "\uB9F5",
+  "the map description": "\uB9F5 \uC124\uBA85",
+  "the map name": "\uB9F5 \uC774\uB984",
+  "the strings already read the same in both games": "\uBB38\uC790\uC5F4\uC774 \uC774\uBBF8 \uB450 \uAC8C\uC784\uC5D0\uC11C \uB611\uAC19\uC774 \uBCF4\uC784",
+  "warning": "\uACBD\uACE0",
+  "{bad} of {records} unit records name a unit type or owner the game does not have": "\uC720\uB2DB \uB808\uCF54\uB4DC {records}\uAC1C \uC911 {bad}\uAC1C\uAC00 \uAC8C\uC784\uC5D0 \uC5C6\uB294 \uC720\uB2DB \uC885\uB958\uB098 \uC18C\uC720\uC790\uB97C \uAC00\uB9AC\uD0B5\uB2C8\uB2E4",
+  "{n, plural, one {# briefing line} other {# briefing lines}}": "\uBE0C\uB9AC\uD551 \uC904 {n}\uAC1C",
+  "{n, plural, one {# error} other {# errors}}": "\uC624\uB958 {n}\uAC1C",
+  "{n, plural, one {# force name} other {# force names}}": "\uC138\uB825 \uC774\uB984 {n}\uAC1C",
+  "{n, plural, one {# location name} other {# location names}}": "\uB85C\uCF00\uC774\uC158 \uC774\uB984 {n}\uAC1C",
+  "{n, plural, one {# note} other {# notes}}": "\uCC38\uACE0 {n}\uAC1C",
+  "{n, plural, one {# repair} other {# repairs}} written to the file": "\uBCF5\uAD6C {n}\uAC1C\uB97C \uD30C\uC77C\uC5D0 \uC500",
+  "{n, plural, one {# repair} other {# repairs}} written to the file \u2014 the parser still says: {warnings}": "\uBCF5\uAD6C {n}\uAC1C\uB97C \uD30C\uC77C\uC5D0 \uC500 \u2014 \uD30C\uC11C\uAC00 \uC5EC\uC804\uD788 \uBCF4\uACE0\uD568: {warnings}",
+  "{n, plural, one {# sound name} other {# sound names}}": "\uC0AC\uC6B4\uB4DC \uC774\uB984 {n}\uAC1C",
+  "{n, plural, one {# string draws} other {# strings draw}} differently in Remastered than in 1.16.1": "\uBB38\uC790\uC5F4 {n}\uAC1C\uAC00 \uB9AC\uB9C8\uC2A4\uD130\uC5D0\uC11C 1.16.1\uACFC \uB2E4\uB974\uAC8C \uADF8\uB824\uC9D1\uB2C8\uB2E4",
+  "{n, plural, one {# string stacks} other {# strings stack}} text on one line": "\uBB38\uC790\uC5F4 {n}\uAC1C\uAC00 \uD55C \uC904\uC5D0 \uD14D\uC2A4\uD2B8\uB97C \uACB9\uCE69\uB2C8\uB2E4",
+  "{n, plural, one {# string stacks} other {# strings stack}} text on one line ({where})": "\uBB38\uC790\uC5F4 {n}\uAC1C\uAC00 \uD55C \uC904\uC5D0 \uD14D\uC2A4\uD2B8\uB97C \uACB9\uCE69\uB2C8\uB2E4 ({where})",
+  "{n, plural, one {# string} other {# strings}} given the line-break colour reset": "\uBB38\uC790\uC5F4 {n}\uAC1C\uC5D0 \uC904\uBC14\uAFC8 \uC0C9 \uCD08\uAE30\uD654\uB97C \uB123\uC74C",
+  "{n, plural, one {# string} other {# strings}} given the reset 1.16.1 supplied at {breaks, plural, one {# line break} other {# line breaks}}": "\uBB38\uC790\uC5F4 {n}\uAC1C\uC758 \uC904\uBC14\uAFC8 {breaks}\uACF3\uC5D0 1.16.1\uC774 \uB123\uC5B4 \uC8FC\uB358 \uCD08\uAE30\uD654\uB97C \uB123\uC74C",
+  "{n, plural, one {# string} other {# strings}} laid out on one line": "\uBB38\uC790\uC5F4 {n}\uAC1C\uB97C \uD55C \uC904\uB85C \uD3BC\uCE68",
+  "{n, plural, one {# string} other {# strings}} unstacked \u2014 {lines, plural, one {# line} other {# lines}} laid out left to right": "\uBB38\uC790\uC5F4 {n}\uAC1C\uB97C \uD3BC\uCE68 \u2014 {lines}\uC904\uC744 \uC67C\uCABD\uC5D0\uC11C \uC624\uB978\uCABD\uC73C\uB85C \uBC30\uCE58",
+  "{n, plural, one {# switch name} other {# switch names}}": "\uC2A4\uC704\uCE58 \uC774\uB984 {n}\uAC1C",
+  "{n, plural, one {# trigger} other {# triggers}}": "\uD2B8\uB9AC\uAC70 {n}\uAC1C",
+  "{n, plural, one {# unit name} other {# unit names}}": "\uC720\uB2DB \uC774\uB984 {n}\uAC1C",
+  "{n, plural, one {# warning} other {# warnings}}": "\uACBD\uACE0 {n}\uAC1C",
+  "{names} rebuilt from the editor's model": "{names}: \uC5D0\uB514\uD130\uC758 \uBAA8\uB378\uC5D0\uC11C \uB2E4\uC2DC \uB9CC\uB4E6",
+  "{name} appears {n} times": "{name}{name|\uC774} {n}\uBC88 \uB098\uC635\uB2C8\uB2E4",
+  "{name} declares a negative length ({size})": "{name}\uC758 \uAE38\uC774\uAC00 \uC74C\uC218\uC785\uB2C8\uB2E4 ({size})",
+  "{name} declares {count} strings but is too short for their offsets": "{name}\uC5D0 \uBB38\uC790\uC5F4\uC774 {count}\uAC1C\uB77C\uACE0 \uC801\uD600 \uC788\uC9C0\uB9CC \uADF8 \uC624\uD504\uC14B\uC744 \uB2F4\uAE30\uC5D0 \uB108\uBB34 \uC9E7\uC2B5\uB2C8\uB2E4",
+  "{name} declares {declared} bytes but the file has {actual}": "{name}\uC5D0 {declared}\uBC14\uC774\uD2B8\uB77C\uACE0 \uC801\uD600 \uC788\uC9C0\uB9CC \uD30C\uC77C\uC5D0\uB294 {actual}\uBC14\uC774\uD2B8\uAC00 \uC788\uC2B5\uB2C8\uB2E4",
+  "{name} ends with {n} stray bytes after its last whole record": "{name}\uC758 \uB9C8\uC9C0\uB9C9 \uC628\uC804\uD55C \uB808\uCF54\uB4DC \uB4A4\uC5D0 \uB0A8\uB294 \uBC14\uC774\uD2B8\uAC00 {n}\uAC1C \uC788\uC2B5\uB2C8\uB2E4",
+  "{name} is missing ({what})": "{name}{name|\uC774} \uC5C6\uC2B5\uB2C8\uB2E4 ({what})",
+  "{name} is too short to hold its string count": "{name}{name|\uC774} \uBB38\uC790\uC5F4 \uAC1C\uC218\uB97C \uB2F4\uAE30\uC5D0\uB3C4 \uB108\uBB34 \uC9E7\uC2B5\uB2C8\uB2E4",
+  "{name} is {size} bytes; the game reads {wanted}": "{name}{name|\uC774} {size}\uBC14\uC774\uD2B8\uC774\uC9C0\uB9CC \uAC8C\uC784\uC740 {wanted}\uBC14\uC774\uD2B8\uB97C \uC77D\uC2B5\uB2C8\uB2E4",
+  "{outside} of {count} string offsets point outside {name}": "\uBB38\uC790\uC5F4 \uC624\uD504\uC14B {count}\uAC1C \uC911 {outside}\uAC1C\uAC00 {name} \uBC14\uAE65\uC744 \uAC00\uB9AC\uD0B5\uB2C8\uB2E4",
+  "{size} bytes after the last readable section": "\uB9C8\uC9C0\uB9C9\uC73C\uB85C \uC77D\uC744 \uC218 \uC788\uB294 \uC139\uC158 \uB4A4\uC5D0 {size}\uBC14\uC774\uD2B8\uAC00 \uC788\uC2B5\uB2C8\uB2E4",
+  "{size} bytes after the last readable section hold {n} more ({names})": "\uB9C8\uC9C0\uB9C9\uC73C\uB85C \uC77D\uC744 \uC218 \uC788\uB294 \uC139\uC158 \uB4A4\uC758 {size}\uBC14\uC774\uD2B8\uC5D0 \uC139\uC158\uC774 {n}\uAC1C \uB354 \uC788\uC2B5\uB2C8\uB2E4 ({names})"
+};
+
 // plugin.ts
 function activate(api) {
+  api.i18n.register({ ko: KO });
   const session = new Session(api);
-  api.commands.register({ id: "check", title: "Repair Map\u2026", enabled: () => api.document.isOpen(), run: () => {
+  api.commands.register({ id: "check", title: msg("Repair Map\u2026"), enabled: () => api.document.isOpen(), run: () => {
     void session.check(false);
   } });
-  api.menu.add("Tools", { label: "Repair Map\u2026", after: "Check Map\u2026", enabled: () => api.document.isOpen(), command: "check" });
+  api.menu.add("Tools", { label: msg("Repair Map\u2026"), after: "Check Map\u2026", enabled: () => api.document.isOpen(), command: "check" });
   api.events.on("document", (e) => session.onDocument(e));
+  api.events.on("language", () => {
+    void session.relabel();
+  });
   registerPreferencesPage(api);
   return () => session.dispose();
 }
 function registerPreferencesPage(api) {
   const w = api.ui.widgets;
+  const t = api.i18n.t;
   let ask = null;
   api.ui.preferencesPage({
     mount(body) {
-      ask = w.checkbox("Check maps when they open", { value: api.storage.get(ASK_KEY, true) });
+      ask = w.checkbox(t("Check maps when they open"), { value: api.storage.get(ASK_KEY, true) });
       body.append(
         ask,
-        w.hint("Reads each map as it opens and shows the Repair dialog when something is missing or damaged. Off, Tools \u25B8 Repair Map\u2026 still runs the check.")
+        w.hint(t("Reads each map as it opens and shows the Repair dialog when something is missing or damaged. Off, Tools \u25B8 Repair Map\u2026 still runs the check."))
       );
       return () => {
         ask = null;
@@ -787,7 +1007,7 @@ function registerPreferencesPage(api) {
   });
 }
 var ASK_KEY = "ask-on-open";
-var LEVEL_LABEL = { error: "error", warn: "warning", info: "note" };
+var LEVEL_LABEL = { error: msg("error"), warn: msg("warning"), info: msg("note") };
 var STYLE = `
 .rp { display: flex; flex-direction: column; gap: 8px; font-size: 12px; min-height: 0; }
 .rp .rp-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; line-height: 1.4; }
@@ -828,6 +1048,17 @@ var Session = class {
   constructor(api) {
     this.api = api;
   }
+  t = (text, params) => this.api.i18n.t(text, params);
+  /** The language changed: the findings are written in it, so read the map again and draw the dialog anew. */
+  async relabel() {
+    if (!this.handle?.isOpen() || this.busy) return;
+    const generation = this.generation;
+    this.handle.setTitle(this.t("Repair Map"));
+    const analysis = await this.gather();
+    if (generation !== this.generation) return;
+    this.analysis = analysis;
+    this.render();
+  }
   get askOnOpen() {
     return this.api.storage.get(ASK_KEY, true);
   }
@@ -856,14 +1087,14 @@ var Session = class {
     this.original ??= { fileName: api.document.info()?.fileName ?? null, bytes: api.document.sections.file() };
     const generation = this.generation;
     this.busy = true;
-    if (this.handle?.isOpen()) this.handle.setBusy("Checking the map\u2026");
+    if (this.handle?.isOpen()) this.handle.setBusy(this.t("Checking the map\u2026"));
     try {
       const analysis = await this.gather();
       if (generation !== this.generation) return;
       this.analysis = analysis;
       const { counts } = analysis;
       if (auto && counts.error + counts.warn === 0) {
-        if (counts.info > 0) api.ui.status(`Repair: nothing wrong with ${this.name()}; ${plural(counts.info, "note")} (Tools \u25B8 Repair Map\u2026).`);
+        if (counts.info > 0) api.ui.status(this.t("Repair: nothing wrong with {name}; {n, plural, one {# note} other {# notes}} (Tools \u25B8 Repair Map\u2026).", { name: this.name(), n: counts.info }));
         return;
       }
       if (this.handle?.isOpen()) this.render();
@@ -874,7 +1105,7 @@ var Session = class {
     }
   }
   name() {
-    return this.api.document.info()?.fileName ?? this.api.document.info()?.name ?? "the map";
+    return this.api.document.info()?.fileName ?? this.api.document.info()?.name ?? this.t("the map");
   }
   async gather() {
     const { sections } = this.api.document;
@@ -889,12 +1120,12 @@ var Session = class {
     } catch {
       isom = "unchecked";
     }
-    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage() });
+    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage(), t: this.t });
   }
   /* ── The dialog ─────────────────────────────────────────── */
   open() {
     this.handle = this.api.ui.dialog({
-      title: "Repair Map",
+      title: this.t("Repair Map"),
       size: "lg",
       mount: (body) => {
         this.body = body;
@@ -913,19 +1144,24 @@ var Session = class {
     const { api, body, analysis } = this;
     if (!body || !analysis) return;
     const { el, widgets } = api.ui;
+    const { t } = this;
     body.replaceChildren();
     const root = el("div", { className: "rp" }, el("style", {}, STYLE));
     const { counts, findings } = analysis;
     const total = findings.length;
-    const summary = total === 0 ? "Nothing to repair." : [counts.error && plural(counts.error, "error"), counts.warn && plural(counts.warn, "warning"), counts.info && plural(counts.info, "note")].filter(Boolean).join(", ");
+    const summary = total === 0 ? t("Nothing to repair.") : [
+      counts.error && t("{n, plural, one {# error} other {# errors}}", { n: counts.error }),
+      counts.warn && t("{n, plural, one {# warning} other {# warnings}}", { n: counts.warn }),
+      counts.info && t("{n, plural, one {# note} other {# notes}}", { n: counts.info })
+    ].filter(Boolean).join(", ");
     root.append(el("div", { className: "rp-head" }, el("b", {}, this.name()), el("span", { className: "rp-dim" }, summary)));
     const list = el("div", { className: "rp-list" });
-    if (total === 0) list.append(el("div", { className: "rp-none" }, "Every section is where the game expects it, at the size it reads, with nothing repeated or left over."));
+    if (total === 0) list.append(el("div", { className: "rp-none" }, t("Every section is where the game expects it, at the size it reads, with nothing repeated or left over.")));
     for (const f of findings) {
       const tick = widgets.checkbox(f.title, {
         value: f.repair ? this.ticks.get(f.id) ?? f.recommended : false,
         disabled: !f.repair,
-        title: f.repair ? f.recommended ? "Recommended" : "Optional \u2014 read the note first" : "Nothing the plugin can do about this one",
+        title: f.repair ? f.recommended ? t("Recommended") : t("Optional \u2014 read the note first") : t("Nothing the plugin can do about this one"),
         onChange: (v) => {
           this.ticks.set(f.id, v);
           this.relabelRepairButton();
@@ -934,12 +1170,12 @@ var Session = class {
       const row = el(
         "div",
         { className: "rp-row" },
-        el("span", { className: `rp-badge ${f.level}`, title: LEVEL_LABEL[f.level] }, LEVEL_LABEL[f.level]),
-        el("span", { className: "rp-sec", title: f.section ? readableName(f.section) ? api.document.sections.spec(f.section)?.what ?? "" : describeName(f.section) : "the file" }, f.section ? readableName(f.section) ? f.section : "????" : "file"),
+        el("span", { className: `rp-badge ${f.level}`, title: t(LEVEL_LABEL[f.level]) }, t(LEVEL_LABEL[f.level])),
+        el("span", { className: "rp-sec", title: f.section ? readableName(f.section) ? api.document.sections.spec(f.section)?.what ?? "" : describeName(f.section) : t("the file") }, f.section ? readableName(f.section) ? f.section : "????" : t("file")),
         tick
       );
       const item = el("div", { className: "rp-item" }, row, el("div", { className: "rp-detail" }, f.detail));
-      if (this.attempted.has(f.id)) item.append(el("div", { className: "rp-again" }, "Still reported after the last repair."));
+      if (this.attempted.has(f.id)) item.append(el("div", { className: "rp-again" }, t("Still reported after the last repair.")));
       list.append(item);
     }
     root.append(list);
@@ -949,17 +1185,17 @@ var Session = class {
       this.render();
     };
     const chosen = this.selected().length;
-    this.repairButton = widgets.button(chosen === 0 ? "Repair" : `Repair ${chosen} selected`, { primary: true, onClick: () => {
+    this.repairButton = widgets.button(this.repairLabel(chosen), { primary: true, onClick: () => {
       void this.repair();
     } });
     const actions = el(
       "div",
       { className: "rp-actions" },
-      widgets.button("Recommended", { ghost: true, disabled: repairable.length === 0, title: "Tick the repairs that only write what the game already does, or restore what the editor needs", onClick: () => setAll((f) => f.recommended) }),
-      widgets.button("All", { ghost: true, disabled: repairable.length === 0, onClick: () => setAll(() => true) }),
-      widgets.button("None", { ghost: true, disabled: repairable.length === 0, onClick: () => setAll(() => false) }),
+      widgets.button(t("Recommended"), { ghost: true, disabled: repairable.length === 0, title: t("Tick the repairs that only write what the game already does, or restore what the editor needs"), onClick: () => setAll((f) => f.recommended) }),
+      widgets.button(t("All"), { ghost: true, disabled: repairable.length === 0, onClick: () => setAll(() => true) }),
+      widgets.button(t("None"), { ghost: true, disabled: repairable.length === 0, onClick: () => setAll(() => false) }),
       el("span", { className: "rp-grow" }),
-      this.original && this.repaired ? widgets.button("Restore original", { title: "Put the file back as it was when it opened", onClick: () => {
+      this.original && this.repaired ? widgets.button(t("Restore original"), { title: t("Put the file back as it was when it opened"), onClick: () => {
         void this.restore();
       } }) : null,
       this.repairButton
@@ -970,17 +1206,20 @@ var Session = class {
     root.append(el(
       "div",
       { className: "rp-foot" },
-      widgets.checkbox("Check maps when they open", { value: this.askOnOpen, onChange: (v) => api.storage.set(ASK_KEY, v) }),
-      el("span", {}, "A repair rewrites the file and clears the undo history, as Section Explorer and Resize do.")
+      widgets.checkbox(t("Check maps when they open"), { value: this.askOnOpen, onChange: (v) => api.storage.set(ASK_KEY, v) }),
+      el("span", {}, t("A repair rewrites the file and clears the undo history, as Section Explorer and Resize do."))
     ));
     body.append(root);
   }
   repairButton = null;
+  repairLabel(n) {
+    return n === 0 ? this.t("Repair") : this.t("Repair {n} selected", { n });
+  }
   /** The count in the button's label follows the ticks; the ring, when there is one, is a child node before the text. */
   relabelRepairButton() {
     if (!this.repairButton) return;
     const n = this.selected().length;
-    const text = n === 0 ? "Repair" : `Repair ${n} selected`;
+    const text = this.repairLabel(n);
     const last = this.repairButton.lastChild;
     if (last && last.nodeType === Node.TEXT_NODE) last.textContent = text;
     else this.repairButton.append(text);
@@ -1015,66 +1254,66 @@ var Session = class {
     return { strings, units, changed: r.changed };
   }
   async repair() {
-    const { api } = this;
+    const { api, t } = this;
     const chosen = this.selected();
     if (chosen.length === 0 || this.busy || !api.document.isOpen()) return;
     const { sections } = api.document;
     const generation = this.generation;
     this.busy = true;
     this.updateRepairButton();
-    this.handle?.setBusy("Repairing\u2026");
+    this.handle?.setBusy(t("Repairing\u2026"));
     const done = [];
     try {
-      const outcome = applyRepairs(parseChunks(sections.file()), chosen.map((f) => f.repair), { known: sections.known(), defaults: (n) => sections.defaults(n) });
+      const outcome = applyRepairs(parseChunks(sections.file()), chosen.map((f) => f.repair), { known: sections.known(), defaults: (n) => sections.defaults(n), t });
       const hostRepairs = /* @__PURE__ */ new Set(["rebuild", "rebuild-isom", "set-strings"]);
       const byteLevel = chosen.filter((f) => !hostRepairs.has(f.repair.kind));
       if (byteLevel.length > 0) {
         const r = sections.replaceFile(serializeChunks(outcome.file));
-        done.push(`${plural(byteLevel.length, "repair")} written to the file${r.warnings.length > 0 ? ` \u2014 the parser still says: ${r.warnings.join("; ")}` : ""}`);
+        done.push(r.warnings.length > 0 ? t("{n, plural, one {# repair} other {# repairs}} written to the file \u2014 the parser still says: {warnings}", { n: byteLevel.length, warnings: r.warnings.join("; ") }) : t("{n, plural, one {# repair} other {# repairs}} written to the file", { n: byteLevel.length }));
       }
       if (outcome.setStrings.includes("colours")) {
         const { strings, units, changed } = this.rewriteStrings(
-          "Fix string colours",
+          t("Fix string colours"),
           (s) => api.text.fixBleeding(s),
           (s) => api.text.bleedingLines(s).length,
-          (n) => `${plural(n, "string")} given the line-break colour reset`
+          (n) => t("{n, plural, one {# string} other {# strings}} given the line-break colour reset", { n })
         );
-        done.push(strings === 0 ? "the strings already read the same in both games" : `${plural(strings, "string")} given the reset 1.16.1 supplied at ${plural(units, "line break")}${changed ? "" : " (nothing changed)"}`);
+        done.push(strings === 0 ? t("the strings already read the same in both games") : t("{n, plural, one {# string} other {# strings}} given the reset 1.16.1 supplied at {breaks, plural, one {# line break} other {# line breaks}}", { n: strings, breaks: units }) + (changed ? "" : t(" (nothing changed)")));
       }
       if (outcome.setStrings.includes("stacks")) {
         const { strings, units, changed } = this.rewriteStrings(
-          "Flatten stacked text",
+          t("Flatten stacked text"),
           (s) => api.text.flattenStacks(s),
           (s) => api.text.stackedLines(s).length,
-          (n) => `${plural(n, "string")} laid out on one line`
+          (n) => t("{n, plural, one {# string} other {# strings}} laid out on one line", { n })
         );
-        done.push(strings === 0 ? "no string stacked text on a line" : `${plural(strings, "string")} unstacked \u2014 ${plural(units, "line")} laid out left to right${changed ? "" : " (nothing changed)"}`);
+        done.push(strings === 0 ? t("no string stacked text on a line") : t("{n, plural, one {# string} other {# strings}} unstacked \u2014 {lines, plural, one {# line} other {# lines}} laid out left to right", { n: strings, lines: units }) + (changed ? "" : t(" (nothing changed)")));
       }
       if (outcome.rebuild.length > 0) {
         const r = sections.rebuild(outcome.rebuild);
-        done.push(r.rebuilt.length > 0 ? `${r.rebuilt.map((n) => n.trim()).join(", ")} rebuilt from the editor's model` : "nothing to rebuild");
+        done.push(r.rebuilt.length > 0 ? t("{names} rebuilt from the editor's model", { names: r.rebuilt.map((n) => n.trim()).join(", ") }) : t("nothing to rebuild"));
       }
       if (outcome.rebuildIsom) {
-        let note = "the ISOM could not be rebuilt (tileset graphics not loaded)";
-        api.document.edit("Rebuild ISOM", (tx) => {
+        let note = t("the ISOM could not be rebuilt (tileset graphics not loaded)");
+        api.document.edit(t("Rebuild ISOM"), (tx) => {
           const r = tx.rebuildIsom();
           if (!r) return;
-          note = r.created ? `ISOM rebuilt from the tiles \u2014 ${plural(r.diamonds, "diamond")}${r.unresolved > 0 ? `, ${r.unresolved} guessed under doodads or off the edge` : ""}` : r.changed > 0 ? `ISOM brought back in step \u2014 ${plural(r.changed, "lattice value")} changed` : "the lattice was already the closest fit the tiles allow";
+          note = r.created ? r.unresolved > 0 ? t("ISOM rebuilt from the tiles \u2014 {n, plural, one {# diamond} other {# diamonds}}, {guessed} guessed under doodads or off the edge", { n: r.diamonds, guessed: r.unresolved }) : t("ISOM rebuilt from the tiles \u2014 {n, plural, one {# diamond} other {# diamonds}}", { n: r.diamonds }) : r.changed > 0 ? t("ISOM brought back in step \u2014 {n, plural, one {# lattice value} other {# lattice values}} changed", { n: r.changed }) : t("the lattice was already the closest fit the tiles allow");
         });
         done.push(note);
       }
-      for (const s of outcome.skipped) done.push(`skipped: ${s}`);
+      for (const s of outcome.skipped) done.push(t("skipped: {why}", { why: s }));
       this.repaired = true;
       this.ticks.clear();
       this.attempted = new Set(chosen.map((f) => f.id));
-      api.ui.status(`Repair: ${done.join("; ")}.`);
-      this.log = [`Done: ${done.join("; ")}.`];
+      api.ui.status(t("Repair: {done}.", { done: done.join("; ") }));
+      this.log = [t("Done: {done}.", { done: done.join("; ") })];
       if (generation === this.generation) {
         this.analysis = await this.gather();
         for (const f of this.analysis.findings) this.ticks.set(f.id, false);
       }
     } catch (err) {
-      this.log = [`Repair failed: ${err instanceof Error ? err.message : String(err)}`];
+      this.log = [t("Repair failed: {error}", { error: err instanceof Error ? err.message : String(err) })];
       api.ui.status(this.log[0]);
     } finally {
       this.busy = false;
@@ -1088,14 +1327,14 @@ var Session = class {
     const generation = this.generation;
     this.busy = true;
     this.updateRepairButton();
-    this.handle?.setBusy("Restoring the original\u2026");
+    this.handle?.setBusy(this.t("Restoring the original\u2026"));
     try {
       api.document.sections.replaceFile(this.original.bytes);
       this.repaired = false;
       this.ticks.clear();
       this.attempted.clear();
-      this.log = ["The file is back as it was when it opened."];
-      api.ui.status(`Repair: ${this.name()} restored to the file that was opened.`);
+      this.log = [this.t("The file is back as it was when it opened.")];
+      api.ui.status(this.t("Repair: {name} restored to the file that was opened.", { name: this.name() }));
       if (generation === this.generation) this.analysis = await this.gather();
     } finally {
       this.busy = false;
@@ -1104,7 +1343,6 @@ var Session = class {
     }
   }
 };
-var plural = (n, word) => `${n.toLocaleString("en-US")} ${word}${n === 1 ? "" : "s"}`;
 export {
   activate as default
 };
