@@ -1041,6 +1041,9 @@ var Session = class {
   original = null;
   repaired = false;
   log = [];
+  /** The map the fields above are about; the other open maps' copies wait in `parked`. */
+  front = null;
+  parked = /* @__PURE__ */ new Map();
   busy = false;
   /** Bumped on every open / close so a check still gathering for the previous map throws its result away. */
   generation = 0;
@@ -1065,12 +1068,24 @@ var Session = class {
   onDocument(e) {
     if (e.reason === "replace") return;
     this.generation++;
+    this.handle?.close();
+    this.ticks.clear();
+    const open = new Set(this.api.document.list().map((d) => d.id));
+    if (this.front !== null && this.front !== e.id && open.has(this.front)) {
+      this.parked.set(this.front, { original: this.original, repaired: this.repaired, log: this.log, attempted: this.attempted });
+    }
+    for (const id of this.parked.keys()) if (!open.has(id)) this.parked.delete(id);
+    this.front = e.id;
+    const back = e.id === null ? void 0 : this.parked.get(e.id);
+    if (e.id !== null) this.parked.delete(e.id);
+    if (e.reason === "switch" && back) {
+      ({ original: this.original, repaired: this.repaired, log: this.log, attempted: this.attempted } = back);
+      return;
+    }
     this.original = null;
     this.repaired = false;
     this.log = [];
-    this.ticks.clear();
-    this.attempted.clear();
-    this.handle?.close();
+    this.attempted = /* @__PURE__ */ new Set();
     if (e.reason !== "open") return;
     this.original = { fileName: e.fileName, bytes: this.api.document.sections.file() };
     if (this.askOnOpen) setTimeout(() => {
@@ -1344,5 +1359,6 @@ var Session = class {
   }
 };
 export {
+  Session,
   activate as default
 };

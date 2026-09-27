@@ -5,8 +5,8 @@
  * its declared and real length, repeats, the values in the headers and tables — and
  * lists what is missing, damaged or odd, each finding saying what the game does with
  * the file as it is and what fixing it would change. Tick what you want and press
- * Repair; the original bytes stay in memory until the next map opens, so Restore
- * original undoes the lot. Tools ▸ Repair Map… runs the same check by hand, and the
+ * Repair; the original bytes stay in memory while the map is open, so Restore
+ * original undoes the lot, even after another map was in front meanwhile. Tools ▸ Repair Map… runs the same check by hand, and the
  * plugin's page in Edit ▸ Preferences turns the check on open off and on again.
  *
  * `chk.ts` reads the container, `analyze.ts` turns a chunk list into findings and
@@ -85,7 +85,15 @@ const STYLE = `
 .rp .rp-foot { display: flex; align-items: center; gap: 10px; color: var(--text-faint, #6b7382); }
 `;
 
-class Session {
+/** What Repair keeps for an open map that is not in front. */
+interface Parked {
+  original: { fileName: string | null; bytes: Uint8Array } | null;
+  repaired: boolean;
+  log: string[];
+  attempted: Set<string>;
+}
+
+export class Session {
   private handle: DialogHandle | null = null;
   private body: HTMLElement | null = null;
   private analysis: Analysis | null = null;
@@ -95,6 +103,9 @@ class Session {
   private original: { fileName: string | null; bytes: Uint8Array } | null = null;
   private repaired = false;
   private log: string[] = [];
+  /** The map the fields above are about; the other open maps' copies wait in `parked`. */
+  private front: number | null = null;
+  private parked = new Map<number, Parked>();
   private busy = false;
   /** Bumped on every open / close so a check still gathering for the previous map throws its result away. */
   private generation = 0;
@@ -121,13 +132,27 @@ class Session {
   onDocument(e: DocumentEvent) {
     if (e.reason === "replace") return;
     this.generation++;
+    // Whatever dialog was up was about the map that just went, behind or away.
+    this.handle?.close();
+    this.ticks.clear();
+    // The map that was in front keeps its original while it stays open, so Restore original is
+    // still there when it comes back; a map that closed takes its copy with it.
+    const open = new Set(this.api.document.list().map((d) => d.id));
+    if (this.front !== null && this.front !== e.id && open.has(this.front)) {
+      this.parked.set(this.front, { original: this.original, repaired: this.repaired, log: this.log, attempted: this.attempted });
+    }
+    for (const id of this.parked.keys()) if (!open.has(id)) this.parked.delete(id);
+    this.front = e.id;
+    const back = e.id === null ? undefined : this.parked.get(e.id);
+    if (e.id !== null) this.parked.delete(e.id);
+    if (e.reason === "switch" && back) {
+      ({ original: this.original, repaired: this.repaired, log: this.log, attempted: this.attempted } = back);
+      return;
+    }
     this.original = null;
     this.repaired = false;
     this.log = [];
-    this.ticks.clear();
-    this.attempted.clear();
-    // Whatever dialog was up was about the map that just went.
-    this.handle?.close();
+    this.attempted = new Set();
     if (e.reason !== "open") return;
     // The bytes as they came in, before any repair; kept until the next map.
     this.original = { fileName: e.fileName, bytes: this.api.document.sections.file() };

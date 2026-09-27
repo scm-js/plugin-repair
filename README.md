@@ -15,7 +15,7 @@ already sees, some restoring what the editor needs and the game does not, a few 
 change what the map is and are left unticked with a note saying why.
 
 It is an unprotector that explains itself. Nothing is rewritten that you did not tick,
-and the file as it came in stays at hand until the next map opens.
+and the file as it came in stays at hand for as long as the map is open.
 
 ## Install
 
@@ -46,7 +46,9 @@ read, and a finding that came back from the repair you just ran says so under it
 A repair rewrites the file and hands it back to the editor, which parses it afresh: every
 view follows, and the undo history is cleared, as it is after Section Explorer and
 Resize. **Restore original** puts the bytes back as they were when the map opened. Save
-under a new name if you want to keep both.
+under a new name if you want to keep both. With several maps open, each keeps its own
+original: switch to another map and back, and Restore original is still there under
+Tools ▸ Repair Map….
 
 *Check maps when they open*, in the dialog's footer, turns the automatic check off; Tools
 ▸ Repair Map… still works. The same setting is on the plugin's page in **Edit ▸
