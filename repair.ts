@@ -5,7 +5,7 @@
  * resolved to chunk objects before anything moves, so an index from the analysis stays
  * valid however many removals come before it.
  */
-import { chunk, combine, named, parseChunks, readableName, type Chunk, type ChunkFile } from "./chk";
+import { chunk, combine, minimumOf, named, parseChunks, readableName, type Chunk, type ChunkFile } from "./chk";
 import type { Repair } from "./analyze";
 import type { SectionKnowledge } from "@scm-js/plugin-api";
 import { english, type Translate } from "./i18n";
@@ -73,7 +73,8 @@ export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairCon
         const parts = named(file, r.name).filter((c) => !removals.has(c));
         if (parts.length < 2) break;
         const k = spec(r.name);
-        const data = combine(parts, k?.mode ?? "last", k?.size)!;
+        const data = combine(parts, k?.mode ?? "last", k?.size, minimumOf(k));
+        if (!data) { skipped.push(t("no copy of {name} the game takes", { name: r.name.trim() })); break; }
         const last = parts[parts.length - 1];
         last.data = data;
         last.declaredSize = data.length;
@@ -98,7 +99,7 @@ export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairCon
         break;
       }
       case "insert": {
-        const data = r.source === "defaults" ? ctx.defaults(r.name) : (() => { const k = spec(r.source.copyOf); return combine(named(file, r.source.copyOf), k?.mode ?? "last", k?.size); })();
+        const data = r.source === "defaults" ? ctx.defaults(r.name) : (() => { const k = spec(r.source.copyOf); return combine(named(file, r.source.copyOf), k?.mode ?? "last", k?.size, minimumOf(k)); })();
         if (!data) { skipped.push(t("nothing to write for {name}", { name: r.name.trim() })); break; }
         const k = spec(r.name);
         inserts.push(chunk(r.name, k?.size != null && data.length !== k.size ? fit(data, k.size, r.name === "MASK" ? 0xff : 0) : data));

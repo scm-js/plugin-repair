@@ -50,7 +50,8 @@ function readableName(name) {
 function named(file, name) {
   return file.chunks.filter((c) => c.name === name);
 }
-function combine(parts, mode, size) {
+function combine(parts, mode, size, minimum = 0) {
+  if (mode === "last" || mode === "first") parts = parts.filter((p) => p.data.length >= minimum);
   if (parts.length === 0) return null;
   switch (mode) {
     case "first":
@@ -76,6 +77,7 @@ function combine(parts, mode, size) {
 }
 var u16 = (b, at) => at + 2 <= b.length ? b[at] | b[at + 1] << 8 : null;
 var u32 = (b, at) => at + 4 <= b.length ? (b[at] | b[at + 1] << 8 | b[at + 2] << 16 | b[at + 3] << 24) >>> 0 : null;
+var minimumOf = (k) => k?.minimum ?? 0;
 
 // colors.ts
 function snippet(text, max = 40) {
@@ -158,7 +160,7 @@ function analyze(input) {
   const has = (name) => live(name).length > 0;
   const bytesOf = (name) => {
     const k = spec.get(name);
-    return combine(live(name), k?.mode ?? "last", k?.size ?? void 0);
+    return combine(live(name), k?.mode ?? "last", k?.size ?? void 0, minimumOf(k));
   };
   file.chunks.forEach((c, index) => {
     const label = c.name.trim() || t("chunk at {offset}", { offset: c.offset });
@@ -723,7 +725,11 @@ function applyRepairs(input, repairs, ctx) {
         const parts = named(file, r.name).filter((c) => !removals.has(c));
         if (parts.length < 2) break;
         const k = spec(r.name);
-        const data = combine(parts, k?.mode ?? "last", k?.size);
+        const data = combine(parts, k?.mode ?? "last", k?.size, minimumOf(k));
+        if (!data) {
+          skipped.push(t("no copy of {name} the game takes", { name: r.name.trim() }));
+          break;
+        }
         const last = parts[parts.length - 1];
         last.data = data;
         last.declaredSize = data.length;
@@ -756,7 +762,7 @@ function applyRepairs(input, repairs, ctx) {
       case "insert": {
         const data = r.source === "defaults" ? ctx.defaults(r.name) : (() => {
           const k2 = spec(r.source.copyOf);
-          return combine(named(file, r.source.copyOf), k2?.mode ?? "last", k2?.size);
+          return combine(named(file, r.source.copyOf), k2?.mode ?? "last", k2?.size, minimumOf(k2));
         })();
         if (!data) {
           skipped.push(t("nothing to write for {name}", { name: r.name.trim() }));
@@ -930,6 +936,7 @@ var KO = {
   "no section at {index}": "{index}\uBC88 \uC139\uC158 \uC5C6\uC74C",
   "no string stacked text on a line": "\uD55C \uC904\uC5D0 \uD14D\uC2A4\uD2B8\uB97C \uACB9\uCE5C \uBB38\uC790\uC5F4 \uC5C6\uC74C",
   "no trailing bytes": "\uB4A4\uC5D0 \uB0A8\uB294 \uBC14\uC774\uD2B8 \uC5C6\uC74C",
+  "no copy of {name} the game takes": "\uAC8C\uC784\uC774 \uC77D\uB294 {name} \uC0AC\uBCF8 \uC5C6\uC74C",
   "note": "\uCC38\uACE0",
   "nothing to rebuild": "\uB2E4\uC2DC \uB9CC\uB4E4 \uAC83 \uC5C6\uC74C",
   "nothing to write for {name}": "{name}\uC5D0 \uC4F8 \uAC83 \uC5C6\uC74C",
@@ -1004,6 +1011,7 @@ var KO = {
 };
 
 // plugin.ts
+var HOST_REPAIRS = /* @__PURE__ */ new Set(["rebuild", "rebuild-isom", "set-strings"]);
 function activate(api) {
   api.i18n.register({ ko: KO });
   const session = new Session(api);
@@ -1360,6 +1368,9 @@ var Session = class {
    */
   async repair(chosen, asOpened) {
     const { api, t } = this;
+    if (asOpened && api.document.info()?.viewOnly === true) {
+      chosen = chosen.filter((f) => !HOST_REPAIRS.has(f.repair.kind));
+    }
     if (chosen.length === 0 || this.busy || !api.document.isOpen()) return;
     const { sections } = api.document;
     const generation = this.generation;
@@ -1369,8 +1380,7 @@ var Session = class {
     const done = [];
     try {
       const outcome = applyRepairs(parseChunks(sections.file()), chosen.map((f) => f.repair), { known: sections.known(), defaults: (n) => sections.defaults(n), t });
-      const hostRepairs = /* @__PURE__ */ new Set(["rebuild", "rebuild-isom", "set-strings"]);
-      const byteLevel = chosen.filter((f) => !hostRepairs.has(f.repair.kind));
+      const byteLevel = chosen.filter((f) => !HOST_REPAIRS.has(f.repair.kind));
       if (byteLevel.length > 0) {
         const r = sections.replaceFile(serializeChunks(outcome.file), { asOpened });
         done.push(r.warnings.length > 0 ? t("{n, plural, one {# repair} other {# repairs}} written to the file \u2014 the parser still says: {warnings}", { n: byteLevel.length, warnings: r.warnings.join("; ") }) : t("{n, plural, one {# repair} other {# repairs}} written to the file", { n: byteLevel.length }));

@@ -6,7 +6,7 @@
  * the file as it is — that is the point of the plugin over an unprotector that silently
  * rewrites everything.
  */
-import { combine, named, parseChunks, readableName, u16, u32, type Chunk, type ChunkFile } from "./chk";
+import { combine, minimumOf, named, parseChunks, readableName, u16, u32, type Chunk, type ChunkFile } from "./chk";
 import { snippet, type TextHelpers } from "./colors";
 import type { IsomReport, SectionKnowledge } from "@scm-js/plugin-api";
 import { english, type Translate } from "./i18n";
@@ -110,7 +110,7 @@ export function analyze(input: AnalysisInput): Analysis {
   const has = (name: string) => live(name).length > 0;
   const bytesOf = (name: string): Uint8Array | null => {
     const k = spec.get(name);
-    return combine(live(name), k?.mode ?? "last", k?.size ?? undefined);
+    return combine(live(name), k?.mode ?? "last", k?.size ?? undefined, minimumOf(k));
   };
 
   /* ── The container ─────────────────────────────────────── */

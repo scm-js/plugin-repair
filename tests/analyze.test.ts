@@ -55,6 +55,23 @@ const byId = (findings: Finding[], id: string) => findings.find((f) => f.id === 
 const at = (file: ChunkFile, name: string) => file.chunks.findIndex((c) => c.name === name);
 const JUNK = "\x00\x01\x02\x03";
 
+describe("a decoy string table", () => {
+  // La Mancha 1.1 (protected): the real STR, then a 1-byte one near the end. The game passes
+  // over a copy too short for its string count, which the editor says with `minimum`.
+  const decoy = () => { const f = goodFile(); f.chunks.push(chunk("STR ", new Uint8Array([0xa1]))); return f; };
+  const withMinimum = KNOWN.map((k) => (k.name === "STR " ? { ...k, minimum: 2 } : k));
+
+  it("reads the real table, and the fold keeps it", () => {
+    const a = analyze(input(decoy(), { known: withMinimum }));
+    expect(ids(a.findings)).not.toContain("str:STR ");
+    expect(byId(a.findings, "repeat:STR ").repair).toEqual({ kind: "collapse", name: "STR " });
+  });
+
+  it("takes the last copy from an editor that does not send a minimum", () => {
+    expect(ids(analyze(input(decoy())).findings)).toContain("str:STR ");
+  });
+});
+
 describe("a sound file", () => {
   it("has nothing to report", () => {
     const a = analyze(input(goodFile()));
