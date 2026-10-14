@@ -819,6 +819,31 @@ function fit(data, size, fill) {
   return out;
 }
 
+// plan.ts
+var MODES = ["auto", "ask", "off"];
+function readMode(stored, legacyAsk) {
+  if (MODES.includes(stored)) return stored;
+  return legacyAsk === false ? "off" : "auto";
+}
+function group(findings) {
+  const groups = { safe: [], review: [], notes: [] };
+  for (const f of findings) {
+    if (f.repair && f.recommended) groups.safe.push(f);
+    else if (f.level === "info") groups.notes.push(f);
+    else groups.review.push(f);
+  }
+  return groups;
+}
+function cellText(groups, repaired, t = english) {
+  const parts = [];
+  if (repaired > 0) parts.push(t("Repaired {n}", { n: repaired }));
+  if (groups.safe.length > 0) parts.push(t("{n} to fix", { n: groups.safe.length }));
+  if (groups.review.length > 0) parts.push(t("{n} to review", { n: groups.review.length }));
+  if (parts.length === 0) return null;
+  const joined = parts.join(" \xB7 ");
+  return { text: repaired > 0 ? joined : t("Repair: {parts}", { parts: joined }), warn: groups.safe.length + groups.review.length > 0 };
+}
+
 // ko.ts
 var KO = {
   " (nothing changed)": " (\uBC14\uB010 \uAC83 \uC5C6\uC74C)",
@@ -826,13 +851,10 @@ var KO = {
   "0x12 and 0x13 move the text after them to the right or the centre of the line they are on, which rendered properly in 1.16.1, so {lines, plural, one {# line here is} other {# lines here are}} drawn in two or more places at once. Remastered does not draw them that way, and neither does this editor. Flattening drops the codes that split each line and joins its pieces left to right in the order they are written, keeping the colours and every word: the first would read {example}.": "0x12\uC640 0x13\uC740 \uADF8 \uB4A4\uC758 \uD14D\uC2A4\uD2B8\uB97C \uADF8 \uC904\uC758 \uC624\uB978\uCABD\uC774\uB098 \uAC00\uC6B4\uB370\uB85C \uC62E\uAE30\uBA70, 1.16.1\uC5D0\uC11C\uB294 \uC81C\uB300\uB85C \uADF8\uB824\uC84C\uC2B5\uB2C8\uB2E4. \uADF8\uB798\uC11C \uC5EC\uAE30 \uC788\uB294 {lines}\uC904\uC740 \uB450 \uAD70\uB370 \uC774\uC0C1\uC5D0 \uB3D9\uC2DC\uC5D0 \uADF8\uB824\uC9D1\uB2C8\uB2E4. \uB9AC\uB9C8\uC2A4\uD130\uB294 \uC774\uB807\uAC8C \uADF8\uB9AC\uC9C0 \uC54A\uACE0 \uC774 \uC5D0\uB514\uD130\uB3C4 \uB9C8\uCC2C\uAC00\uC9C0\uC785\uB2C8\uB2E4. \uD3BC\uCE58\uAE30\uB294 \uC904\uC744 \uB098\uB204\uB294 \uCF54\uB4DC\uB97C \uBE7C\uACE0 \uC870\uAC01\uC744 \uC4F0\uC778 \uC21C\uC11C\uB300\uB85C \uC67C\uCABD\uC5D0\uC11C \uC624\uB978\uCABD\uC73C\uB85C \uC787\uC2B5\uB2C8\uB2E4. \uC0C9\uACFC \uBAA8\uB4E0 \uB2E8\uC5B4\uB294 \uADF8\uB300\uB85C \uB0A8\uC2B5\uB2C8\uB2E4. \uCCAB \uBC88\uC9F8 \uBB38\uC790\uC5F4\uC740 {example}{example|\uC774} \uB429\uB2C8\uB2E4.",
   "1.16.1 started every line in the default colour; Remastered carries the previous line's colour across the break, so {lines, plural, one {# line here is} other {# lines here are}} drawn in a colour the map never set{carried} \u2014 for example {example}. Writing the reset the old game supplied at the head of each of those lines makes both games draw the string alike, and changes nothing about what it says. Whether that is a repair depends on when the map was made: one written for Remastered may mean the colours it shows, so this is never ticked for you.": "1.16.1\uC740 \uBAA8\uB4E0 \uC904\uC744 \uAE30\uBCF8 \uC0C9\uC73C\uB85C \uC2DC\uC791\uD588\uC9C0\uB9CC, \uB9AC\uB9C8\uC2A4\uD130\uB294 \uC55E \uC904\uC758 \uC0C9\uC744 \uC904\uBC14\uAFC8 \uB108\uBA38\uB85C \uC774\uC5B4 \uAC11\uB2C8\uB2E4. \uADF8\uB798\uC11C \uC5EC\uAE30 \uC788\uB294 {lines}\uC904\uC740 \uB9F5\uC774 \uC815\uD55C \uC801 \uC5C6\uB294 \uC0C9\uC73C\uB85C \uADF8\uB824\uC9D1\uB2C8\uB2E4{carried}. \uC608: {example}. \uC61B \uAC8C\uC784\uC774 \uB123\uC5B4 \uC8FC\uB358 \uCD08\uAE30\uD654 \uCF54\uB4DC\uB97C \uADF8 \uC904\uB4E4\uC758 \uC55E\uC5D0 \uC368 \uB123\uC73C\uBA74 \uB450 \uAC8C\uC784\uC774 \uBB38\uC790\uC5F4\uC744 \uB611\uAC19\uC774 \uADF8\uB9AC\uBA70, \uB0B4\uC6A9\uC740 \uC870\uAE08\uB3C4 \uBC14\uB00C\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. \uC774\uAC83\uC774 \uBCF5\uAD6C\uC778\uC9C0\uB294 \uB9F5\uC774 \uC5B8\uC81C \uB9CC\uB4E4\uC5B4\uC84C\uB294\uC9C0\uC5D0 \uB2EC\uB824 \uC788\uC2B5\uB2C8\uB2E4. \uB9AC\uB9C8\uC2A4\uD130\uC6A9\uC73C\uB85C \uB9CC\uB4E0 \uB9F5\uC774\uB77C\uBA74 \uC9C0\uAE08 \uBCF4\uC774\uB294 \uC0C9\uC774 \uC758\uB3C4\uD55C \uAC83\uC77C \uC218 \uC788\uC73C\uBBC0\uB85C, \uC774 \uD56D\uBAA9\uC740 \uC808\uB300 \uC790\uB3D9\uC73C\uB85C \uCCB4\uD06C\uB418\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.",
   "A negative length makes the game seek backwards and read earlier bytes again; the editor stops reading here and keeps the rest of the file as-is. Removing the header leaves what came before it.": "\uAE38\uC774\uAC00 \uC74C\uC218\uC774\uBA74 \uAC8C\uC784\uC740 \uB4A4\uB85C \uB3CC\uC544\uAC00 \uC55E\uC758 \uBC14\uC774\uD2B8\uB97C \uB2E4\uC2DC \uC77D\uC2B5\uB2C8\uB2E4. \uC5D0\uB514\uD130\uB294 \uC5EC\uAE30\uC11C \uC77D\uAE30\uB97C \uBA48\uCD94\uACE0 \uD30C\uC77C\uC758 \uB098\uBA38\uC9C0\uB97C \uADF8\uB300\uB85C \uB461\uB2C8\uB2E4. \uC774 \uD5E4\uB354\uB97C \uC9C0\uC6B0\uBA74 \uADF8 \uC55E\uC758 \uB0B4\uC6A9\uB9CC \uB0A8\uC2B5\uB2C8\uB2E4.",
-  "A repair rewrites the file and clears the undo history, as Section Explorer and Resize do.": "\uBCF5\uAD6C\uB294 \uC139\uC158 \uD0D0\uC0C9\uAE30\uB098 \uD06C\uAE30 \uC870\uC808\uCC98\uB7FC \uD30C\uC77C\uC744 \uB2E4\uC2DC \uC4F0\uACE0 \uC2E4\uD589 \uCDE8\uC18C \uAE30\uB85D\uC744 \uC9C0\uC6C1\uB2C8\uB2E4.",
   "A section named {name} ({size} bytes)": "\uC774\uB984\uC774 {name}\uC778 \uC139\uC158 ({size}\uBC14\uC774\uD2B8)",
   "A unit id past 227 or an owner past player 12 is nothing the game can place; it skips or misreads the record. Removing those records is the only clean repair, and it is data loss \u2014 look at them in the Units layer first.": "\uC720\uB2DB \uBC88\uD638\uAC00 227\uC744 \uB118\uAC70\uB098 \uC18C\uC720\uC790\uAC00 \uD50C\uB808\uC774\uC5B4 12\uB97C \uB118\uC73C\uBA74 \uAC8C\uC784\uC774 \uBC30\uCE58\uD560 \uC218 \uC5C6\uC5B4, \uADF8 \uB808\uCF54\uB4DC\uB97C \uAC74\uB108\uB6F0\uAC70\uB098 \uC798\uBABB \uC77D\uC2B5\uB2C8\uB2E4. \uADF8 \uB808\uCF54\uB4DC\uB97C \uC9C0\uC6B0\uB294 \uAC83\uC774 \uC720\uC77C\uD558\uAC8C \uAE54\uB054\uD55C \uBCF5\uAD6C\uC774\uC9C0\uB9CC \uB370\uC774\uD130\uAC00 \uC0AC\uB77C\uC9C0\uBBC0\uB85C, \uBA3C\uC800 \uC720\uB2DB \uB808\uC774\uC5B4\uC5D0\uC11C \uC0B4\uD3B4\uBCF4\uC138\uC694.",
   "About {share}% of the map is terrain no diamond lattice describes": "\uB9F5\uC758 \uC57D {share}%\uB294 \uC5B4\uB5A4 \uB9C8\uB984\uBAA8 \uACA9\uC790\uB85C\uB3C4 \uB098\uD0C0\uB0BC \uC218 \uC5C6\uB294 \uC9C0\uD615\uC785\uB2C8\uB2E4",
-  "All": "\uC804\uCCB4",
   "An unknown section {name} ({size} bytes)": "\uC54C \uC218 \uC5C6\uB294 \uC139\uC158 {name} ({size}\uBC14\uC774\uD2B8)",
-  "Check maps when they open": "\uB9F5\uC744 \uC5F4 \uB54C \uAC80\uC0AC",
   "Checking the map\u2026": "\uB9F5 \uAC80\uC0AC \uC911\u2026",
   "DIM says the map is {width} \xD7 {height} tiles": "DIM\uC5D0 \uC801\uD78C \uB9F5 \uD06C\uAE30\uAC00 {width} \xD7 {height} \uD0C0\uC77C\uC785\uB2C8\uB2E4",
   "Done: {done}.": "\uC644\uB8CC: {done}.",
@@ -849,29 +871,19 @@ var KO = {
   "ISOM rebuilt from the tiles \u2014 {n, plural, one {# diamond} other {# diamonds}}": "\uD0C0\uC77C\uC5D0\uC11C ISOM\uC744 \uB2E4\uC2DC \uB9CC\uB4E6 \u2014 \uB9C8\uB984\uBAA8 {n}\uAC1C",
   "ISOM rebuilt from the tiles \u2014 {n, plural, one {# diamond} other {# diamonds}}, {guessed} guessed under doodads or off the edge": "\uD0C0\uC77C\uC5D0\uC11C ISOM\uC744 \uB2E4\uC2DC \uB9CC\uB4E6 \u2014 \uB9C8\uB984\uBAA8 {n}\uAC1C, \uC7A5\uC2DD\uBB3C \uC544\uB798\uB098 \uAC00\uC7A5\uC790\uB9AC \uBC16\uC758 {guessed}\uAC1C\uB294 \uCD94\uC815",
   "No ISOM section \u2014 the isometric brush is off": "ISOM \uC139\uC158 \uC5C6\uC74C \u2014 \uC544\uC774\uC18C\uBA54\uD2B8\uB9AD \uBE0C\uB7EC\uC2DC\uB97C \uC4F8 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4",
-  "None": "\uC5C6\uC74C",
-  "Nothing the plugin can do about this one": "\uD50C\uB7EC\uADF8\uC778\uC774 \uC774 \uD56D\uBAA9\uC5D0 \uD560 \uC218 \uC788\uB294 \uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4",
-  "Nothing to repair.": "\uBCF5\uAD6C\uD560 \uAC83\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.",
   "OWNR holds an unknown player type for {players}": "OWNR\uC5D0 {players}\uC758 \uC54C \uC218 \uC5C6\uB294 \uD50C\uB808\uC774\uC5B4 \uC720\uD615\uC774 \uC788\uC2B5\uB2C8\uB2E4",
   "Only the low three bits pick the tileset, and some protectors set the rest. Writing the value the game uses changes nothing it draws.": "\uD0C0\uC77C\uC14B\uC740 \uC544\uB798\uCABD \uC138 \uBE44\uD2B8\uB85C\uB9CC \uC815\uD574\uC9C0\uBA70, \uC77C\uBD80 \uBCF4\uD638 \uB3C4\uAD6C\uAC00 \uB098\uBA38\uC9C0 \uBE44\uD2B8\uB97C \uCC44\uC6C1\uB2C8\uB2E4. \uAC8C\uC784\uC774 \uC4F0\uB294 \uAC12\uC744 \uC368 \uB123\uC5B4\uB3C4 \uADF8\uB824\uC9C0\uB294 \uAC83\uC740 \uBC14\uB00C\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.",
-  "Optional \u2014 read the note first": "\uC120\uD0DD \u2014 \uBA3C\uC800 \uC124\uBA85\uC744 \uC77D\uC73C\uC138\uC694",
   "Player types run 0 to 7 (inactive, computer, human, rescuable, neutral). Setting the unknown ones to inactive takes those slots out of the game; Scenario \u25B8 Player Settings can put them back.": "\uD50C\uB808\uC774\uC5B4 \uC720\uD615\uC740 0\uBD80\uD130 7\uAE4C\uC9C0\uC785\uB2C8\uB2E4 (\uBE44\uD65C\uC131, \uCEF4\uD4E8\uD130, \uC0AC\uB78C, \uAD6C\uC870 \uAC00\uB2A5, \uC911\uB9BD). \uC54C \uC218 \uC5C6\uB294 \uAC83\uC744 \uBE44\uD65C\uC131\uC73C\uB85C \uBC14\uAFB8\uBA74 \uADF8 \uC2AC\uB86F\uC740 \uAC8C\uC784\uC5D0\uC11C \uBE60\uC9D1\uB2C8\uB2E4. \uC2DC\uB098\uB9AC\uC624 \u25B8 \uD50C\uB808\uC774\uC5B4 \uC124\uC815\uC5D0\uC11C \uB418\uB3CC\uB9B4 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
   "Put the file back as it was when it opened": "\uD30C\uC77C\uC744 \uC5F4\uC5C8\uC744 \uB54C \uC0C1\uD0DC\uB85C \uB418\uB3CC\uB9BD\uB2C8\uB2E4",
   "Races run 0 to 7 (Zerg, Terran, Protoss, user-selectable, random, inactive). Setting the unknown ones to inactive; Scenario \u25B8 Player Settings can change them.": "\uC885\uC871\uC740 0\uBD80\uD130 7\uAE4C\uC9C0\uC785\uB2C8\uB2E4 (\uC800\uADF8, \uD14C\uB780, \uD504\uB85C\uD1A0\uC2A4, \uC0AC\uC6A9\uC790 \uC120\uD0DD, \uBB34\uC791\uC704, \uBE44\uD65C\uC131). \uC54C \uC218 \uC5C6\uB294 \uAC83\uC740 \uBE44\uD65C\uC131\uC73C\uB85C \uBC14\uAFC9\uB2C8\uB2E4. \uC2DC\uB098\uB9AC\uC624 \u25B8 \uD50C\uB808\uC774\uC5B4 \uC124\uC815\uC5D0\uC11C \uBC14\uAFC0 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
-  "Reads each map as it opens and shows the Repair dialog when something is missing or damaged. Off, Tools \u25B8 Repair Map\u2026 still runs the check.": "\uB9F5\uC744 \uC5F4 \uB54C\uB9C8\uB2E4 \uC77D\uC5B4 \uBCF4\uACE0, \uBE60\uC9C0\uAC70\uB098 \uC190\uC0C1\uB41C \uAC83\uC774 \uC788\uC73C\uBA74 \uBCF5\uAD6C \uB300\uD654 \uC0C1\uC790\uB97C \uB744\uC6C1\uB2C8\uB2E4. \uAEBC \uB450\uC5B4\uB3C4 \uB3C4\uAD6C \u25B8 \uB9F5 \uBCF5\uAD6C\u2026\uB85C \uAC80\uC0AC\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
   "Rebuild ISOM": "ISOM \uB2E4\uC2DC \uB9CC\uB4E4\uAE30",
-  "Recommended": "\uAD8C\uC7A5",
   "Records are {stride} bytes each; the game reads whole ones and drops the remainder. Trimming does the same.": "\uB808\uCF54\uB4DC\uB294 \uAC01\uAC01 {stride}\uBC14\uC774\uD2B8\uC774\uACE0, \uAC8C\uC784\uC740 \uC628\uC804\uD55C \uB808\uCF54\uB4DC\uB9CC \uC77D\uACE0 \uB098\uBA38\uC9C0\uB294 \uBC84\uB9BD\uB2C8\uB2E4. \uC798\uB77C \uB0B4\uAE30\uB3C4 \uB611\uAC19\uC774 \uD569\uB2C8\uB2E4.",
-  "Repair": "\uBCF5\uAD6C",
   "Repair Map": "\uB9F5 \uBCF5\uAD6C",
   "Repair Map\u2026": "\uB9F5 \uBCF5\uAD6C\u2026",
   "Repair failed: {error}": "\uBCF5\uAD6C \uC2E4\uD328: {error}",
-  "Repair {n} selected": "\uC120\uD0DD\uD55C {n}\uAC1C \uBCF5\uAD6C",
-  "Repair: nothing wrong with {name}; {n, plural, one {# note} other {# notes}} (Tools \u25B8 Repair Map\u2026).": "\uBCF5\uAD6C: {name}\uC5D0 \uBB38\uC81C\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4. \uCC38\uACE0 {n}\uAC1C (\uB3C4\uAD6C \u25B8 \uB9F5 \uBCF5\uAD6C\u2026).",
   "Repair: {done}.": "\uBCF5\uAD6C: {done}.",
   "Repair: {name} restored to the file that was opened.": "\uBCF5\uAD6C: {name}{name|\uC744} \uCC98\uC74C \uC5F0 \uD30C\uC77C\uB85C \uB418\uB3CC\uB838\uC2B5\uB2C8\uB2E4.",
   "Repairing\u2026": "\uBCF5\uAD6C \uC911\u2026",
-  "Restore original": "\uC6D0\uBCF8 \uBCF5\uC6D0",
   "Restoring the original\u2026": "\uC6D0\uBCF8 \uBCF5\uC6D0 \uC911\u2026",
   "SIDE holds an unknown race for {players}": "SIDE\uC5D0 {players}\uC758 \uC54C \uC218 \uC5C6\uB294 \uC885\uC871\uC774 \uC788\uC2B5\uB2C8\uB2E4",
   "Still reported after the last repair.": "\uB9C8\uC9C0\uB9C9 \uBCF5\uAD6C \uB4A4\uC5D0\uB3C4 \uC5EC\uC804\uD788 \uBCF4\uACE0\uB429\uB2C8\uB2E4.",
@@ -910,7 +922,6 @@ var KO = {
   "The sections are not in StarEdit's order": "\uC139\uC158\uC774 StarEdit \uC21C\uC11C\uAC00 \uC544\uB2D9\uB2C8\uB2E4",
   "They are not sections; the game never reads them and Save writes them back unchanged. Dropping them loses nothing the game uses.": "\uC139\uC158\uC774 \uC544\uB2D9\uB2C8\uB2E4. \uAC8C\uC784\uC740 \uC77D\uC9C0 \uC54A\uACE0, \uC800\uC7A5\uD558\uBA74 \uADF8\uB300\uB85C \uB2E4\uC2DC \uC501\uB2C8\uB2E4. \uBC84\uB824\uB3C4 \uAC8C\uC784\uC774 \uC4F0\uB294 \uAC83\uC740 \uC783\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.",
   "They follow a header the reader could not act on, so neither the game nor the editor sees them as sections. Recovering them appends them as sections in their own right.": "\uC77D\uC744 \uC218 \uC5C6\uB294 \uD5E4\uB354 \uB4A4\uC5D0 \uC788\uC5B4\uC11C \uAC8C\uC784\uB3C4 \uC5D0\uB514\uD130\uB3C4 \uC139\uC158\uC73C\uB85C \uBCF4\uC9C0 \uBABB\uD569\uB2C8\uB2E4. \uB418\uC0B4\uB9AC\uBA74 \uC628\uC804\uD55C \uC139\uC158\uC73C\uB85C \uB4A4\uC5D0 \uB367\uBD99\uC785\uB2C8\uB2E4.",
-  "Tick the repairs that only write what the game already does, or restore what the editor needs": "\uAC8C\uC784\uC774 \uC774\uBBF8 \uD558\uB294 \uB300\uB85C\uB9CC \uC4F0\uAC70\uB098 \uC5D0\uB514\uD130\uC5D0 \uD544\uC694\uD55C \uAC83\uC744 \uB418\uC0B4\uB9AC\uB294 \uBCF5\uAD6C\uB97C \uCCB4\uD06C\uD569\uB2C8\uB2E4",
   "VCOD is not StarEdit's table": "VCOD\uAC00 StarEdit\uC758 \uD45C\uAC00 \uC544\uB2D9\uB2C8\uB2E4",
   "VER is {version}, not a version StarEdit writes (59, 63, 205, 206)": "VER\uC774 {version}{version|\uC73C\uB85C}, StarEdit\uC774 \uC4F0\uB294 \uBC84\uC804(59, 63, 205, 206)\uC774 \uC544\uB2D9\uB2C8\uB2E4",
   "chunk at {offset}": "{offset} \uC704\uCE58\uC758 \uCCAD\uD06C",
@@ -936,7 +947,6 @@ var KO = {
   "warning": "\uACBD\uACE0",
   "{bad} of {records} unit records name a unit type or owner the game does not have": "\uC720\uB2DB \uB808\uCF54\uB4DC {records}\uAC1C \uC911 {bad}\uAC1C\uAC00 \uAC8C\uC784\uC5D0 \uC5C6\uB294 \uC720\uB2DB \uC885\uB958\uB098 \uC18C\uC720\uC790\uB97C \uAC00\uB9AC\uD0B5\uB2C8\uB2E4",
   "{n, plural, one {# briefing line} other {# briefing lines}}": "\uBE0C\uB9AC\uD551 \uC904 {n}\uAC1C",
-  "{n, plural, one {# error} other {# errors}}": "\uC624\uB958 {n}\uAC1C",
   "{n, plural, one {# force name} other {# force names}}": "\uC138\uB825 \uC774\uB984 {n}\uAC1C",
   "{n, plural, one {# location name} other {# location names}}": "\uB85C\uCF00\uC774\uC158 \uC774\uB984 {n}\uAC1C",
   "{n, plural, one {# note} other {# notes}}": "\uCC38\uACE0 {n}\uAC1C",
@@ -953,7 +963,6 @@ var KO = {
   "{n, plural, one {# switch name} other {# switch names}}": "\uC2A4\uC704\uCE58 \uC774\uB984 {n}\uAC1C",
   "{n, plural, one {# trigger} other {# triggers}}": "\uD2B8\uB9AC\uAC70 {n}\uAC1C",
   "{n, plural, one {# unit name} other {# unit names}}": "\uC720\uB2DB \uC774\uB984 {n}\uAC1C",
-  "{n, plural, one {# warning} other {# warnings}}": "\uACBD\uACE0 {n}\uAC1C",
   "{names} rebuilt from the editor's model": "{names}: \uC5D0\uB514\uD130\uC758 \uBAA8\uB378\uC5D0\uC11C \uB2E4\uC2DC \uB9CC\uB4E6",
   "{name} appears {n} times": "{name}{name|\uC774} {n}\uBC88 \uB098\uC635\uB2C8\uB2E4",
   "{name} declares a negative length ({size})": "{name}\uC758 \uAE38\uC774\uAC00 \uC74C\uC218\uC785\uB2C8\uB2E4 ({size})",
@@ -965,7 +974,33 @@ var KO = {
   "{name} is {size} bytes; the game reads {wanted}": "{name}{name|\uC774} {size}\uBC14\uC774\uD2B8\uC774\uC9C0\uB9CC \uAC8C\uC784\uC740 {wanted}\uBC14\uC774\uD2B8\uB97C \uC77D\uC2B5\uB2C8\uB2E4",
   "{outside} of {count} string offsets point outside {name}": "\uBB38\uC790\uC5F4 \uC624\uD504\uC14B {count}\uAC1C \uC911 {outside}\uAC1C\uAC00 {name} \uBC14\uAE65\uC744 \uAC00\uB9AC\uD0B5\uB2C8\uB2E4",
   "{size} bytes after the last readable section": "\uB9C8\uC9C0\uB9C9\uC73C\uB85C \uC77D\uC744 \uC218 \uC788\uB294 \uC139\uC158 \uB4A4\uC5D0 {size}\uBC14\uC774\uD2B8\uAC00 \uC788\uC2B5\uB2C8\uB2E4",
-  "{size} bytes after the last readable section hold {n} more ({names})": "\uB9C8\uC9C0\uB9C9\uC73C\uB85C \uC77D\uC744 \uC218 \uC788\uB294 \uC139\uC158 \uB4A4\uC758 {size}\uBC14\uC774\uD2B8\uC5D0 \uC139\uC158\uC774 {n}\uAC1C \uB354 \uC788\uC2B5\uB2C8\uB2E4 ({names})"
+  "{size} bytes after the last readable section hold {n} more ({names})": "\uB9C8\uC9C0\uB9C9\uC73C\uB85C \uC77D\uC744 \uC218 \uC788\uB294 \uC139\uC158 \uB4A4\uC758 {size}\uBC14\uC774\uD2B8\uC5D0 \uC139\uC158\uC774 {n}\uAC1C \uB354 \uC788\uC2B5\uB2C8\uB2E4 ({names})",
+  "Repair what is safe, list the rest": "\uC548\uC804\uD55C \uAC83\uC740 \uBCF5\uAD6C\uD558\uACE0 \uB098\uBA38\uC9C0\uB294 \uBAA9\uB85D\uC73C\uB85C",
+  "Ask before repairing anything": "\uBCF5\uAD6C\uD558\uAE30 \uC804\uC5D0 \uBB3B\uAE30",
+  "Do not check": "\uAC80\uC0AC\uD558\uC9C0 \uC54A\uC74C",
+  "When a map opens": "\uB9F5\uC744 \uC5F4 \uB54C",
+  "A safe repair only writes what the game already does with the file, or puts back something the editor needs, such as the terrain record a protector stripped. It does not mark the map as changed, and Save writes it. Anything that is a judgement call waits in the status bar until you open it. Tools \u25B8 Repair Map\u2026 runs the check whichever you choose.": "\uC548\uC804\uD55C \uBCF5\uAD6C\uB294 \uAC8C\uC784\uC774 \uC774\uBBF8 \uD30C\uC77C\uC744 \uB2E4\uB8E8\uB294 \uBC29\uC2DD\uB300\uB85C\uB9CC \uC4F0\uAC70\uB098, \uBCF4\uD638 \uB3C4\uAD6C\uAC00 \uC9C0\uC6B4 \uC9C0\uD615 \uAE30\uB85D\uCC98\uB7FC \uC5D0\uB514\uD130\uC5D0 \uD544\uC694\uD55C \uAC83\uC744 \uB418\uC0B4\uB9BD\uB2C8\uB2E4. \uB9F5\uC744 \uBC14\uB010 \uAC83\uC73C\uB85C \uD45C\uC2DC\uD558\uC9C0 \uC54A\uC73C\uBA70, \uC800\uC7A5\uD558\uBA74 \uD568\uAED8 \uC800\uC7A5\uB429\uB2C8\uB2E4. \uD310\uB2E8\uC774 \uD544\uC694\uD55C \uD56D\uBAA9\uC740 \uC0C1\uD0DC \uD45C\uC2DC\uC904\uC5D0\uC11C \uC5F4\uC5B4 \uBCFC \uB54C\uAE4C\uC9C0 \uAE30\uB2E4\uB9BD\uB2C8\uB2E4. \uC5B4\uB290 \uCABD\uC744 \uACE0\uB974\uB4E0 \uB3C4\uAD6C \u25B8 \uB9F5 \uBCF5\uAD6C\u2026\uB85C \uAC80\uC0AC\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
+  "Repair Map: what was repaired, and what is left": "\uB9F5 \uBCF5\uAD6C: \uBCF5\uAD6C\uD55C \uAC83\uACFC \uB0A8\uC740 \uAC83",
+  "Safe to repair": "\uC548\uC804\uD558\uAC8C \uBCF5\uAD6C\uD560 \uC218 \uC788\uC74C",
+  "Repair {n, plural, one {this one} other {all #}}": "{n}\uAC1C \uBAA8\uB450 \uBCF5\uAD6C",
+  "Needs your decision": "\uACB0\uC815\uC774 \uD544\uC694\uD568",
+  "Apply": "\uC801\uC6A9",
+  "Nothing else to repair.": "\uB354 \uBCF5\uAD6C\uD560 \uAC83\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.",
+  "Repaired when the map opened ({n})": "\uB9F5\uC744 \uC5F4 \uB54C \uBCF5\uAD6C\uD568 ({n})",
+  "Repaired ({n})": "\uBCF5\uAD6C\uD568 ({n})",
+  "Undo": "\uB418\uB3CC\uB9AC\uAE30",
+  "Advanced: every finding by section": "\uACE0\uAE09: \uC139\uC158\uBCC4 \uBAA8\uB4E0 \uD56D\uBAA9",
+  "A repair rewrites the file and clears the undo history, as Section Explorer and Resize do. Edit \u25B8 Preferences \u25B8 Plugins \u25B8 Repair chooses what happens when a map opens.": "\uBCF5\uAD6C\uB294 \uC139\uC158 \uD0D0\uC0C9\uAE30\uB098 \uD06C\uAE30 \uC870\uC808\uCC98\uB7FC \uD30C\uC77C\uC744 \uB2E4\uC2DC \uC4F0\uACE0 \uC2E4\uD589 \uCDE8\uC18C \uAE30\uB85D\uC744 \uC9C0\uC6C1\uB2C8\uB2E4. \uB9F5\uC744 \uC5F4 \uB54C \uBB34\uC5C7\uC744 \uD560\uC9C0\uB294 \uD3B8\uC9D1 \u25B8 \uD658\uACBD \uC124\uC815 \u25B8 \uD50C\uB7EC\uADF8\uC778 \u25B8 \uBCF5\uAD6C\uC5D0\uC11C \uACE0\uB985\uB2C8\uB2E4.",
+  "{n, plural, one {# problem was} other {# problems were}} repaired when the map opened. Each writes what the game already does with the file, or puts back something the editor needs.": "\uB9F5\uC744 \uC5F4 \uB54C \uBB38\uC81C {n}\uAC1C\uB97C \uBCF5\uAD6C\uD588\uC2B5\uB2C8\uB2E4. \uBAA8\uB450 \uAC8C\uC784\uC774 \uC774\uBBF8 \uD30C\uC77C\uC744 \uB2E4\uB8E8\uB294 \uBC29\uC2DD\uB300\uB85C \uC4F0\uAC70\uB098, \uC5D0\uB514\uD130\uC5D0 \uD544\uC694\uD55C \uAC83\uC744 \uB418\uC0B4\uB9B0 \uAC83\uC785\uB2C8\uB2E4.",
+  "{n, plural, one {# problem} other {# problems}} repaired.": "\uBB38\uC81C {n}\uAC1C\uB97C \uBCF5\uAD6C\uD588\uC2B5\uB2C8\uB2E4.",
+  "{n, plural, one {# problem is} other {# problems are}} safe to repair.": "\uBB38\uC81C {n}\uAC1C\uB294 \uC548\uC804\uD558\uAC8C \uBCF5\uAD6C\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
+  "{n, plural, one {# thing needs} other {# things need}} your decision. Read what each one changes first.": "{n}\uAC1C \uD56D\uBAA9\uC740 \uACB0\uC815\uC774 \uD544\uC694\uD569\uB2C8\uB2E4. \uBA3C\uC800 \uAC01\uAC01 \uBB34\uC5C7\uC744 \uBC14\uAFB8\uB294\uC9C0 \uC77D\uC5B4 \uBCF4\uC138\uC694.",
+  "Nothing the plugin can change. This is how the game reads the map.": "\uD50C\uB7EC\uADF8\uC778\uC774 \uBC14\uAFC0 \uC218 \uC5C6\uB294 \uD56D\uBAA9\uC785\uB2C8\uB2E4. \uAC8C\uC784\uC740 \uB9F5\uC744 \uC774\uB807\uAC8C \uC77D\uC2B5\uB2C8\uB2E4.",
+  "Repaired {n}": "{n}\uAC1C \uBCF5\uAD6C\uD568",
+  "{n} to fix": "\uBCF5\uAD6C\uD560 \uAC83 {n}\uAC1C",
+  "{n} to review": "\uAC80\uD1A0\uD560 \uAC83 {n}\uAC1C",
+  "Repair: {parts}": "\uBCF5\uAD6C: {parts}",
+  "{n} more repaired since.": "\uADF8 \uB4A4\uB85C {n}\uAC1C\uB97C \uB354 \uBCF5\uAD6C\uD588\uC2B5\uB2C8\uB2E4."
 };
 
 // plugin.ts
@@ -973,7 +1008,7 @@ function activate(api) {
   api.i18n.register({ ko: KO });
   const session = new Session(api);
   api.commands.register({ id: "check", title: msg("Repair Map\u2026"), enabled: () => api.document.isOpen(), run: () => {
-    void session.check(false);
+    void session.check();
   } });
   api.menu.add("Tools", { label: msg("Repair Map\u2026"), after: "Check Map\u2026", enabled: () => api.document.isOpen(), command: "check" });
   api.events.on("document", (e) => session.onDocument(e));
@@ -983,120 +1018,165 @@ function activate(api) {
   registerPreferencesPage(api);
   return () => session.dispose();
 }
+var MODE_KEY = "on-open";
+var ASK_KEY = "ask-on-open";
+var modeOf = (api) => readMode(api.storage.get(MODE_KEY, null), api.storage.get(ASK_KEY, true));
 function registerPreferencesPage(api) {
   const w = api.ui.widgets;
   const t = api.i18n.t;
-  let ask = null;
+  let pick = null;
   api.ui.preferencesPage({
     mount(body) {
-      ask = w.checkbox(t("Check maps when they open"), { value: api.storage.get(ASK_KEY, true) });
+      pick = w.select([
+        { value: "auto", label: t("Repair what is safe, list the rest") },
+        { value: "ask", label: t("Ask before repairing anything") },
+        { value: "off", label: t("Do not check") }
+      ], { value: modeOf(api) });
       body.append(
-        ask,
-        w.hint(t("Reads each map as it opens and shows the Repair dialog when something is missing or damaged. Off, Tools \u25B8 Repair Map\u2026 still runs the check."))
+        w.form([{ label: t("When a map opens"), field: pick }]),
+        w.hint(t("A safe repair only writes what the game already does with the file, or puts back something the editor needs, such as the terrain record a protector stripped. It does not mark the map as changed, and Save writes it. Anything that is a judgement call waits in the status bar until you open it. Tools \u25B8 Repair Map\u2026 runs the check whichever you choose."))
       );
       return () => {
-        ask = null;
+        pick = null;
       };
     },
     apply() {
-      if (ask) api.storage.set(ASK_KEY, ask.input.checked);
+      if (pick) api.storage.set(MODE_KEY, pick.value);
     },
     reset() {
-      if (ask) ask.input.checked = true;
+      if (pick) pick.value = "auto";
     }
   });
 }
-var ASK_KEY = "ask-on-open";
 var LEVEL_LABEL = { error: msg("error"), warn: msg("warning"), info: msg("note") };
 var STYLE = `
-.rp { display: flex; flex-direction: column; gap: 8px; font-size: 12px; min-height: 0; }
-.rp .rp-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; line-height: 1.4; }
-.rp .rp-head b { color: var(--text, #e6e9ef); }
+.rp { display: flex; flex-direction: column; gap: 10px; font-size: 12px; min-height: 0; }
+.rp .rp-head { display: flex; flex-direction: column; gap: 2px; line-height: 1.45; }
+.rp .rp-head b { color: var(--text, #e6e9ef); font-size: 13px; }
 .rp .rp-dim { color: var(--text-dim, #99a2b3); }
-.rp .rp-list { display: flex; flex-direction: column; border: 1px solid var(--border, #333); border-radius: 4px; background: var(--bg-0, #0f1115); max-height: 46vh; overflow: auto; }
-.rp .rp-item { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,.05); }
-.rp .rp-item:last-child { border-bottom: none; }
-.rp .rp-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.rp .rp-row > label { flex: 1; min-width: 0; }
+.rp .rp-scroll { display: flex; flex-direction: column; gap: 12px; max-height: 58vh; overflow: auto; padding-right: 2px; }
+.rp .rp-section { display: flex; flex-direction: column; gap: 6px; }
+.rp .rp-section > h4 { margin: 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim, #99a2b3); }
+.rp .rp-card { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px solid var(--border, #333); border-radius: 4px; background: var(--bg-0, #0f1115); }
+.rp .rp-card.error { border-left: 3px solid rgba(255,90,74,.7); }
+.rp .rp-card.warn { border-left: 3px solid rgba(230,185,92,.7); }
+.rp .rp-card-head { display: flex; align-items: center; gap: 10px; }
+.rp .rp-card-head > .rp-title { flex: 1; min-width: 0; color: var(--text, #e6e9ef); }
+.rp .rp-detail { color: var(--text-dim, #99a2b3); line-height: 1.45; }
+.rp .rp-again { color: #ffcf7a; line-height: 1.4; }
+.rp .rp-cant { color: var(--text-faint, #6b7382); font-style: italic; }
+.rp .rp-lines { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; color: var(--text-dim, #99a2b3); line-height: 1.4; }
+.rp .rp-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; padding: 5px 2px; border-bottom: 1px solid rgba(255,255,255,.05); }
+.rp .rp-row:last-child { border-bottom: none; }
+.rp .rp-row > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .rp .rp-badge { flex: none; width: 58px; text-align: center; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; padding: 1px 0; border-radius: 3px; border: 1px solid transparent; }
 .rp .rp-badge.error { color: #ff8a7a; border-color: rgba(255,90,74,.5); }
 .rp .rp-badge.warn { color: #ffcf7a; border-color: rgba(230,185,92,.5); }
 .rp .rp-badge.info { color: var(--text-dim, #99a2b3); border-color: var(--border, #333); }
 .rp .rp-sec { flex: none; width: 40px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--gold, #e6b95c); white-space: pre; }
-.rp .rp-detail { margin-left: 114px; color: var(--text-dim, #99a2b3); line-height: 1.4; }
-.rp .rp-again { margin-left: 114px; color: #ffcf7a; line-height: 1.4; }
-.rp .rp-none { padding: 12px 8px; color: var(--text-faint, #6b7382); }
-.rp .rp-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.rp .rp-actions .rp-grow { flex: 1; }
-.rp .rp-log { color: var(--text-dim, #99a2b3); line-height: 1.4; white-space: pre-wrap; }
-.rp .rp-foot { display: flex; align-items: center; gap: 10px; color: var(--text-faint, #6b7382); }
+.rp .rp-none { padding: 4px 2px; color: var(--text-dim, #99a2b3); line-height: 1.45; }
+.rp .rp-log { color: var(--text-dim, #99a2b3); line-height: 1.4; white-space: pre-wrap; margin-top: 4px; }
+.rp .rp-foot { color: var(--text-faint, #6b7382); line-height: 1.4; }
 `;
 var Session = class {
   handle = null;
   body = null;
+  cell = null;
   analysis = null;
-  ticks = /* @__PURE__ */ new Map();
-  /** Findings the last press tried to repair, so one that comes back is shown as having survived it. */
+  /** Findings the last press tried to repair and that came back, so they are shown as having survived it. */
   attempted = /* @__PURE__ */ new Set();
   original = null;
-  repaired = false;
+  /** What was repaired since the map opened, in the order it was done. */
+  done = [];
+  /** How many of `done` were made by themselves as the map opened — the first ones. */
+  auto = 0;
   log = [];
   /** The map the fields above are about; the other open maps' copies wait in `parked`. */
   front = null;
   parked = /* @__PURE__ */ new Map();
   busy = false;
-  /** Bumped on every open / close so a check still gathering for the previous map throws its result away. */
+  /** Bumped on every open / close / switch so a check still gathering for the previous map throws its result away. */
   generation = 0;
   api;
   constructor(api) {
     this.api = api;
   }
   t = (text, params) => this.api.i18n.t(text, params);
-  /** The language changed: the findings are written in it, so read the map again and draw the dialog anew. */
+  /** The language changed: the findings are written in it, so read the map again and draw anew. */
   async relabel() {
-    if (!this.handle?.isOpen() || this.busy) return;
+    if (this.busy || !this.analysis || !this.api.document.isOpen()) return;
     const generation = this.generation;
-    this.handle.setTitle(this.t("Repair Map"));
     const analysis = await this.gather();
     if (generation !== this.generation) return;
     this.analysis = analysis;
+    this.handle?.setTitle(this.t("Repair Map"));
     this.render();
-  }
-  get askOnOpen() {
-    return this.api.storage.get(ASK_KEY, true);
+    this.updateCell();
   }
   onDocument(e) {
     if (e.reason === "replace") return;
     this.generation++;
     this.handle?.close();
-    this.ticks.clear();
     const open = new Set(this.api.document.list().map((d) => d.id));
     if (this.front !== null && this.front !== e.id && open.has(this.front)) {
-      this.parked.set(this.front, { original: this.original, repaired: this.repaired, log: this.log, attempted: this.attempted });
+      this.parked.set(this.front, { original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted });
     }
     for (const id of this.parked.keys()) if (!open.has(id)) this.parked.delete(id);
     this.front = e.id;
     const back = e.id === null ? void 0 : this.parked.get(e.id);
     if (e.id !== null) this.parked.delete(e.id);
     if (e.reason === "switch" && back) {
-      ({ original: this.original, repaired: this.repaired, log: this.log, attempted: this.attempted } = back);
+      ({ original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted } = back);
+      this.updateCell();
       return;
     }
     this.original = null;
-    this.repaired = false;
+    this.analysis = null;
+    this.done = [];
+    this.auto = 0;
     this.log = [];
     this.attempted = /* @__PURE__ */ new Set();
+    this.updateCell();
     if (e.reason !== "open") return;
     this.original = { fileName: e.fileName, bytes: this.api.document.sections.file() };
-    if (this.askOnOpen) setTimeout(() => {
-      void this.check(true);
+    const mode = modeOf(this.api);
+    if (mode !== "off") setTimeout(() => {
+      void this.onOpen(mode);
     }, 0);
   }
   dispose() {
     this.handle?.close();
+    this.cell?.remove();
+    this.cell = null;
   }
-  /** Analyse the open map; `auto` (on open) only shows the dialog when something is wrong. */
-  async check(auto) {
+  /**
+   * A map just opened. `auto` repairs the safe findings as the reading of the file and
+   * leaves the rest to the status cell; `ask` opens the dialog when anything is worth it.
+   */
+  async onOpen(mode) {
+    const { api } = this;
+    if (!api.document.isOpen() || this.busy) return;
+    const generation = this.generation;
+    this.busy = true;
+    let analysis;
+    try {
+      analysis = await this.gather();
+    } finally {
+      this.busy = false;
+    }
+    if (generation !== this.generation) return;
+    this.analysis = analysis;
+    const { safe } = group(analysis.findings);
+    const untouched = api.document.info()?.modified !== true && !api.sync?.current();
+    if (mode === "auto" && safe.length > 0 && untouched) {
+      await this.repair(safe, true);
+      return;
+    }
+    this.updateCell();
+    if (mode === "ask" && analysis.counts.error + analysis.counts.warn > 0) this.openDialog();
+  }
+  /** Tools ▸ Repair Map…: check again and show the dialog whatever it finds. */
+  async check() {
     const { api } = this;
     if (!api.document.isOpen() || this.busy) return;
     this.original ??= { fileName: api.document.info()?.fileName ?? null, bytes: api.document.sections.file() };
@@ -1107,13 +1187,9 @@ var Session = class {
       const analysis = await this.gather();
       if (generation !== this.generation) return;
       this.analysis = analysis;
-      const { counts } = analysis;
-      if (auto && counts.error + counts.warn === 0) {
-        if (counts.info > 0) api.ui.status(this.t("Repair: nothing wrong with {name}; {n, plural, one {# note} other {# notes}} (Tools \u25B8 Repair Map\u2026).", { name: this.name(), n: counts.info }));
-        return;
-      }
+      this.updateCell();
       if (this.handle?.isOpen()) this.render();
-      else this.open();
+      else this.openDialog();
     } finally {
       this.busy = false;
       this.handle?.setBusy(false);
@@ -1137,8 +1213,28 @@ var Session = class {
     }
     return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage(), t: this.t });
   }
+  /* ── The status bar cell ────────────────────────────────── */
+  updateCell() {
+    const shown = this.analysis ? cellText(group(this.analysis.findings), this.done.length, this.t) : null;
+    if (!shown) {
+      this.cell?.remove();
+      this.cell = null;
+      return;
+    }
+    const spec = { text: shown.text, warn: shown.warn, busy: this.busy, title: this.t("Repair Map: what was repaired, and what is left") };
+    if (this.cell?.isShown()) this.cell.set(spec);
+    else this.cell = this.api.ui.statusItem({ ...spec, onClick: () => this.openDialog() });
+  }
   /* ── The dialog ─────────────────────────────────────────── */
-  open() {
+  openDialog() {
+    if (!this.analysis) {
+      void this.check();
+      return;
+    }
+    if (this.handle?.isOpen()) {
+      this.render();
+      return;
+    }
     this.handle = this.api.ui.dialog({
       title: this.t("Repair Map"),
       size: "lg",
@@ -1152,99 +1248,88 @@ var Session = class {
       }
     });
   }
-  selected() {
-    return (this.analysis?.findings ?? []).filter((f) => f.repair && (this.ticks.get(f.id) ?? f.recommended));
-  }
   render() {
-    const { api, body, analysis } = this;
+    const { api, body, analysis, t } = this;
     if (!body || !analysis) return;
     const { el, widgets } = api.ui;
-    const { t } = this;
     body.replaceChildren();
     const root = el("div", { className: "rp" }, el("style", {}, STYLE));
-    const { counts, findings } = analysis;
-    const total = findings.length;
-    const summary = total === 0 ? t("Nothing to repair.") : [
-      counts.error && t("{n, plural, one {# error} other {# errors}}", { n: counts.error }),
-      counts.warn && t("{n, plural, one {# warning} other {# warnings}}", { n: counts.warn }),
-      counts.info && t("{n, plural, one {# note} other {# notes}}", { n: counts.info })
-    ].filter(Boolean).join(", ");
-    root.append(el("div", { className: "rp-head" }, el("b", {}, this.name()), el("span", { className: "rp-dim" }, summary)));
-    const list = el("div", { className: "rp-list" });
-    if (total === 0) list.append(el("div", { className: "rp-none" }, t("Every section is where the game expects it, at the size it reads, with nothing repeated or left over.")));
-    for (const f of findings) {
-      const tick = widgets.checkbox(f.title, {
-        value: f.repair ? this.ticks.get(f.id) ?? f.recommended : false,
-        disabled: !f.repair,
-        title: f.repair ? f.recommended ? t("Recommended") : t("Optional \u2014 read the note first") : t("Nothing the plugin can do about this one"),
-        onChange: (v) => {
-          this.ticks.set(f.id, v);
-          this.relabelRepairButton();
-        }
-      });
-      const row = el(
-        "div",
-        { className: "rp-row" },
-        el("span", { className: `rp-badge ${f.level}`, title: t(LEVEL_LABEL[f.level]) }, t(LEVEL_LABEL[f.level])),
-        el("span", { className: "rp-sec", title: f.section ? readableName(f.section) ? api.document.sections.spec(f.section)?.what ?? "" : describeName(f.section) : t("the file") }, f.section ? readableName(f.section) ? f.section : "????" : t("file")),
-        tick
-      );
-      const item = el("div", { className: "rp-item" }, row, el("div", { className: "rp-detail" }, f.detail));
-      if (this.attempted.has(f.id)) item.append(el("div", { className: "rp-again" }, t("Still reported after the last repair.")));
-      list.append(item);
+    const { safe, review, notes } = group(analysis.findings);
+    root.append(el("div", { className: "rp-head" }, el("b", {}, this.name()), el("span", { className: "rp-dim" }, this.summary(safe.length, review.length))));
+    const scroll = el("div", { className: "rp-scroll" });
+    if (safe.length > 0) {
+      const section = el("div", { className: "rp-section" }, el("h4", {}, t("Safe to repair")));
+      for (const f of safe) section.append(this.card(f, null));
+      section.append(el("div", {}, widgets.button(t("Repair {n, plural, one {this one} other {all #}}", { n: safe.length }), { primary: true, disabled: this.busy, onClick: () => {
+        void this.repair(safe, false);
+      } })));
+      scroll.append(section);
     }
-    root.append(list);
-    const repairable = findings.filter((f) => f.repair);
-    const setAll = (pick) => {
-      for (const f of repairable) this.ticks.set(f.id, pick(f));
-      this.render();
-    };
-    const chosen = this.selected().length;
-    this.repairButton = widgets.button(this.repairLabel(chosen), { primary: true, onClick: () => {
-      void this.repair();
-    } });
-    const actions = el(
-      "div",
-      { className: "rp-actions" },
-      widgets.button(t("Recommended"), { ghost: true, disabled: repairable.length === 0, title: t("Tick the repairs that only write what the game already does, or restore what the editor needs"), onClick: () => setAll((f) => f.recommended) }),
-      widgets.button(t("All"), { ghost: true, disabled: repairable.length === 0, onClick: () => setAll(() => true) }),
-      widgets.button(t("None"), { ghost: true, disabled: repairable.length === 0, onClick: () => setAll(() => false) }),
-      el("span", { className: "rp-grow" }),
-      this.original && this.repaired ? widgets.button(t("Restore original"), { title: t("Put the file back as it was when it opened"), onClick: () => {
+    if (review.length > 0) {
+      const section = el("div", { className: "rp-section" }, el("h4", {}, t("Needs your decision")));
+      for (const f of review) section.append(this.card(f, t("Apply")));
+      scroll.append(section);
+    }
+    if (safe.length + review.length === 0) {
+      scroll.append(el("div", { className: "rp-none" }, this.done.length > 0 ? t("Nothing else to repair.") : t("Every section is where the game expects it, at the size it reads, with nothing repeated or left over.")));
+    }
+    if (this.done.length > 0) {
+      const fold = widgets.fold({ text: this.auto === this.done.length ? t("Repaired when the map opened ({n})", { n: this.done.length }) : t("Repaired ({n})", { n: this.done.length }) });
+      fold.mark("\u2713", "ok");
+      fold.body.append(el("ul", { className: "rp-lines" }, ...this.done.map((f) => el("li", {}, f.title))));
+      if (this.log.length > 0) fold.body.append(el("div", { className: "rp-log" }, this.log.join("\n")));
+      if (this.original) fold.action(widgets.button(t("Undo"), { ghost: true, disabled: this.busy, title: t("Put the file back as it was when it opened"), onClick: () => {
         void this.restore();
-      } }) : null,
-      this.repairButton
-    );
-    root.append(actions);
-    this.updateRepairButton();
-    if (this.log.length > 0) root.append(el("div", { className: "rp-log" }, this.log.join("\n")));
-    root.append(el(
-      "div",
-      { className: "rp-foot" },
-      widgets.checkbox(t("Check maps when they open"), { value: this.askOnOpen, onChange: (v) => api.storage.set(ASK_KEY, v) }),
-      el("span", {}, t("A repair rewrites the file and clears the undo history, as Section Explorer and Resize do."))
-    ));
+      } }));
+      scroll.append(fold);
+    } else if (this.log.length > 0) {
+      scroll.append(el("div", { className: "rp-log" }, this.log.join("\n")));
+    }
+    if (notes.length > 0) {
+      const fold = widgets.fold({ text: t("{n, plural, one {# note} other {# notes}}", { n: notes.length }) });
+      for (const f of notes) fold.body.append(this.card(f, t("Apply")));
+      scroll.append(fold);
+    }
+    if (analysis.findings.length > 0) {
+      const fold = widgets.fold({ text: t("Advanced: every finding by section") });
+      for (const f of analysis.findings) {
+        fold.body.append(el(
+          "div",
+          { className: "rp-row" },
+          el("span", { className: `rp-badge ${f.level}` }, t(LEVEL_LABEL[f.level])),
+          el("span", { className: "rp-sec", title: f.section ? readableName(f.section) ? api.document.sections.spec(f.section)?.what ?? "" : describeName(f.section) : t("the file") }, f.section ? readableName(f.section) ? f.section : "????" : t("file")),
+          el("div", {}, el("span", {}, f.title), el("span", { className: "rp-detail" }, f.detail))
+        ));
+      }
+      scroll.append(fold);
+    }
+    root.append(scroll);
+    root.append(el("div", { className: "rp-foot" }, t("A repair rewrites the file and clears the undo history, as Section Explorer and Resize do. Edit \u25B8 Preferences \u25B8 Plugins \u25B8 Repair chooses what happens when a map opens.")));
     body.append(root);
   }
-  repairButton = null;
-  repairLabel(n) {
-    return n === 0 ? this.t("Repair") : this.t("Repair {n} selected", { n });
+  /** The line under the map's name. */
+  summary(safe, review) {
+    const { t } = this;
+    const parts = [];
+    if (this.auto > 0) parts.push(t("{n, plural, one {# problem was} other {# problems were}} repaired when the map opened. Each writes what the game already does with the file, or puts back something the editor needs.", { n: this.auto }));
+    const since = this.done.length - this.auto;
+    if (since > 0) parts.push(this.auto > 0 ? t("{n} more repaired since.", { n: since }) : t("{n, plural, one {# problem} other {# problems}} repaired.", { n: since }));
+    if (safe > 0) parts.push(t("{n, plural, one {# problem is} other {# problems are}} safe to repair.", { n: safe }));
+    if (review > 0) parts.push(t("{n, plural, one {# thing needs} other {# things need}} your decision. Read what each one changes first.", { n: review }));
+    return parts.join(" ");
   }
-  /** The count in the button's label follows the ticks; the ring, when there is one, is a child node before the text. */
-  relabelRepairButton() {
-    if (!this.repairButton) return;
-    const n = this.selected().length;
-    const text = this.repairLabel(n);
-    const last = this.repairButton.lastChild;
-    if (last && last.nodeType === Node.TEXT_NODE) last.textContent = text;
-    else this.repairButton.append(text);
-    this.updateRepairButton();
-  }
-  updateRepairButton() {
-    const n = this.selected().length;
-    if (!this.repairButton) return;
-    this.repairButton.setBusy(this.busy);
-    this.repairButton.disabled = n === 0 || this.busy;
+  /** One finding: what it is, what the game does about it, and its button (`action` null for none). */
+  card(f, action) {
+    const { api, t } = this;
+    const { el, widgets } = api.ui;
+    const head = el("div", { className: "rp-card-head" }, el("span", { className: "rp-title" }, f.title));
+    if (action && f.repair) head.append(widgets.button(action, { disabled: this.busy, onClick: () => {
+      void this.repair([f], false);
+    } }));
+    const card = el("div", { className: `rp-card ${f.level}` }, head, el("div", { className: "rp-detail" }, f.detail));
+    if (!f.repair && f.level !== "info") card.append(el("div", { className: "rp-cant" }, t("Nothing the plugin can change. This is how the game reads the map.")));
+    if (this.attempted.has(f.id)) card.append(el("div", { className: "rp-again" }, t("Still reported after the last repair.")));
+    return card;
   }
   /* ── Doing it ───────────────────────────────────────────── */
   /**
@@ -1268,22 +1353,26 @@ var Session = class {
     });
     return { strings, units, changed: r.changed };
   }
-  async repair() {
+  /**
+   * Apply `chosen`. `asOpened` is the on-open pass: every step is taken as the reading of
+   * the file that was opened, so the map is left unmodified — the steps that go through
+   * the editor's model (a rebuild, the ISOM) are settled the same way at the end.
+   */
+  async repair(chosen, asOpened) {
     const { api, t } = this;
-    const chosen = this.selected();
     if (chosen.length === 0 || this.busy || !api.document.isOpen()) return;
     const { sections } = api.document;
     const generation = this.generation;
     this.busy = true;
-    this.updateRepairButton();
     this.handle?.setBusy(t("Repairing\u2026"));
+    this.cell?.set({ busy: true });
     const done = [];
     try {
       const outcome = applyRepairs(parseChunks(sections.file()), chosen.map((f) => f.repair), { known: sections.known(), defaults: (n) => sections.defaults(n), t });
       const hostRepairs = /* @__PURE__ */ new Set(["rebuild", "rebuild-isom", "set-strings"]);
       const byteLevel = chosen.filter((f) => !hostRepairs.has(f.repair.kind));
       if (byteLevel.length > 0) {
-        const r = sections.replaceFile(serializeChunks(outcome.file));
+        const r = sections.replaceFile(serializeChunks(outcome.file), { asOpened });
         done.push(r.warnings.length > 0 ? t("{n, plural, one {# repair} other {# repairs}} written to the file \u2014 the parser still says: {warnings}", { n: byteLevel.length, warnings: r.warnings.join("; ") }) : t("{n, plural, one {# repair} other {# repairs}} written to the file", { n: byteLevel.length }));
       }
       if (outcome.setStrings.includes("colours")) {
@@ -1317,15 +1406,17 @@ var Session = class {
         });
         done.push(note);
       }
+      if (asOpened && (outcome.rebuild.length > 0 || outcome.rebuildIsom)) sections.replaceFile(sections.file(), { asOpened: true });
       for (const s of outcome.skipped) done.push(t("skipped: {why}", { why: s }));
-      this.repaired = true;
-      this.ticks.clear();
-      this.attempted = new Set(chosen.map((f) => f.id));
-      api.ui.status(t("Repair: {done}.", { done: done.join("; ") }));
+      if (!asOpened) api.ui.status(t("Repair: {done}.", { done: done.join("; ") }));
       this.log = [t("Done: {done}.", { done: done.join("; ") })];
       if (generation === this.generation) {
         this.analysis = await this.gather();
-        for (const f of this.analysis.findings) this.ticks.set(f.id, false);
+        const left = new Set(this.analysis.findings.map((f) => f.id));
+        const repaired = chosen.filter((f) => !left.has(f.id));
+        this.attempted = new Set(chosen.filter((f) => left.has(f.id)).map((f) => f.id));
+        this.done = [...this.done, ...repaired];
+        if (asOpened) this.auto = repaired.length;
       }
     } catch (err) {
       this.log = [t("Repair failed: {error}", { error: err instanceof Error ? err.message : String(err) })];
@@ -1333,7 +1424,11 @@ var Session = class {
     } finally {
       this.busy = false;
       this.handle?.setBusy(false);
-      if (generation === this.generation) this.render();
+      this.cell?.set({ busy: false });
+      if (generation === this.generation) {
+        this.render();
+        this.updateCell();
+      }
     }
   }
   async restore() {
@@ -1341,12 +1436,11 @@ var Session = class {
     if (!this.original || this.busy || !api.document.isOpen()) return;
     const generation = this.generation;
     this.busy = true;
-    this.updateRepairButton();
     this.handle?.setBusy(this.t("Restoring the original\u2026"));
     try {
       api.document.sections.replaceFile(this.original.bytes);
-      this.repaired = false;
-      this.ticks.clear();
+      this.done = [];
+      this.auto = 0;
       this.attempted.clear();
       this.log = [this.t("The file is back as it was when it opened.")];
       api.ui.status(this.t("Repair: {name} restored to the file that was opened.", { name: this.name() }));
@@ -1354,7 +1448,10 @@ var Session = class {
     } finally {
       this.busy = false;
       this.handle?.setBusy(false);
-      if (generation === this.generation) this.render();
+      if (generation === this.generation) {
+        this.render();
+        this.updateCell();
+      }
     }
   }
 };

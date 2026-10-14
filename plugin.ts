@@ -3,31 +3,36 @@
  *
  * When a map opens, the plugin reads the file the way the game does — every section,
  * its declared and real length, repeats, the values in the headers and tables — and
- * lists what is missing, damaged or odd, each finding saying what the game does with
- * the file as it is and what fixing it would change. Tick what you want and press
- * Repair; the original bytes stay in memory while the map is open, so Restore
- * original undoes the lot, even after another map was in front meanwhile. Tools ▸ Repair Map… runs the same check by hand, and the
- * plugin's page in Edit ▸ Preferences turns the check on open off and on again.
+ * repairs what is safe to repair by itself: what only writes what the game already does,
+ * or puts back what the editor needs. Those repairs count as the reading of the file, so
+ * the map does not come up modified. What is left — the judgement calls, and what nothing
+ * can fix — waits behind a cell in the status bar; the dialog behind it explains each one
+ * and applies it on request. The original bytes stay in memory while the map is open, so
+ * Undo in the dialog puts the file back as it opened, even after another map was in front
+ * meanwhile. Edit ▸ Preferences ▸ Plugins ▸ Repair chooses between repairing by itself, asking first
+ * and not checking; Tools ▸ Repair Map… runs the same check by hand.
  *
- * `chk.ts` reads the container, `analyze.ts` turns a chunk list into findings and
- * `repair.ts` applies the byte-level ones — all pure, all tested; this file gathers the
- * inputs from the editor, shows the dialog and runs the repairs that need the editor's
- * model (the two string rewrites through `document.update`, then
+ * `chk.ts` reads the container, `analyze.ts` turns a chunk list into findings, `plan.ts`
+ * sorts them into what is repaired by itself and what waits, and `repair.ts` applies the
+ * byte-level ones — all pure, all tested; this file gathers the inputs from the editor,
+ * shows the status cell and the dialog and runs the repairs that need the editor's model
+ * (the two string rewrites through `document.update`, then
  * `api.document.sections.rebuild` and `tx.rebuildIsom`).
  * `@scm-js/plugin-api` is the editor's type declarations, a devDependency generated from
  * its own `src/plugins/api.ts`; the host erases the type-only import.
  */
-import type { ButtonElement, CheckboxElement, DialogHandle, DocumentEvent, PluginApi } from "@scm-js/plugin-api";
+import type { DialogHandle, DocumentEvent, PluginApi, StatusItemHandle } from "@scm-js/plugin-api";
 import { analyze, describeName, type Analysis, type Finding, type IsomFacts, type Level } from "./analyze";
 import { parseChunks, readableName, serializeChunks } from "./chk";
 import { applyRepairs } from "./repair";
+import { cellText, group, readMode, type Mode } from "./plan";
 import { msg } from "./i18n";
 import { KO } from "./ko";
 
 export default function activate(api: PluginApi) {
   api.i18n.register({ ko: KO });
   const session = new Session(api);
-  api.commands.register({ id: "check", title: msg("Repair Map…"), enabled: () => api.document.isOpen(), run: () => { void session.check(false); } });
+  api.commands.register({ id: "check", title: msg("Repair Map…"), enabled: () => api.document.isOpen(), run: () => { void session.check(); } });
   api.menu.add("Tools", { label: msg("Repair Map…"), after: "Check Map…", enabled: () => api.document.isOpen(), command: "check" });
   api.events.on("document", (e) => session.onDocument(e));
   api.events.on("language", () => { void session.relabel(); });
@@ -35,60 +40,76 @@ export default function activate(api: PluginApi) {
   return () => session.dispose();
 }
 
+const MODE_KEY = "on-open";
+/** The 1.4 tick, *Check maps when they open*; read for a user who has not chosen since. */
+const ASK_KEY = "ask-on-open";
+
+const modeOf = (api: PluginApi): Mode => readMode(api.storage.get<unknown>(MODE_KEY, null), api.storage.get<unknown>(ASK_KEY, true));
+
 /**
- * The plugin's page under Edit ▸ Preferences ▸ Plugins: the one setting, so it can be
- * found again after the dialog's footer turned it off and the dialog stopped appearing.
- * Written on OK or Apply, so Cancel leaves it as it was.
+ * The plugin's page under Edit ▸ Preferences ▸ Plugins: what a map opening does. Written
+ * on OK or Apply, so Cancel leaves it as it was.
  */
 function registerPreferencesPage(api: PluginApi) {
   const w = api.ui.widgets;
   const t = api.i18n.t;
-  let ask: CheckboxElement | null = null;
+  let pick: HTMLSelectElement | null = null;
   api.ui.preferencesPage({
     mount(body) {
-      ask = w.checkbox(t("Check maps when they open"), { value: api.storage.get(ASK_KEY, true) });
+      pick = w.select([
+        { value: "auto", label: t("Repair what is safe, list the rest") },
+        { value: "ask", label: t("Ask before repairing anything") },
+        { value: "off", label: t("Do not check") },
+      ], { value: modeOf(api) });
       body.append(
-        ask,
-        w.hint(t("Reads each map as it opens and shows the Repair dialog when something is missing or damaged. Off, Tools ▸ Repair Map… still runs the check.")),
+        w.form([{ label: t("When a map opens"), field: pick }]),
+        w.hint(t("A safe repair only writes what the game already does with the file, or puts back something the editor needs, such as the terrain record a protector stripped. It does not mark the map as changed, and Save writes it. Anything that is a judgement call waits in the status bar until you open it. Tools ▸ Repair Map… runs the check whichever you choose.")),
       );
-      return () => { ask = null; };
+      return () => { pick = null; };
     },
-    apply() { if (ask) api.storage.set(ASK_KEY, ask.input.checked); },
-    reset() { if (ask) ask.input.checked = true; },
+    apply() { if (pick) api.storage.set(MODE_KEY, pick.value); },
+    reset() { if (pick) pick.value = "auto"; },
   });
 }
 
-const ASK_KEY = "ask-on-open";
 const LEVEL_LABEL: Record<Level, string> = { error: msg("error"), warn: msg("warning"), info: msg("note") };
 
 const STYLE = `
-.rp { display: flex; flex-direction: column; gap: 8px; font-size: 12px; min-height: 0; }
-.rp .rp-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; line-height: 1.4; }
-.rp .rp-head b { color: var(--text, #e6e9ef); }
+.rp { display: flex; flex-direction: column; gap: 10px; font-size: 12px; min-height: 0; }
+.rp .rp-head { display: flex; flex-direction: column; gap: 2px; line-height: 1.45; }
+.rp .rp-head b { color: var(--text, #e6e9ef); font-size: 13px; }
 .rp .rp-dim { color: var(--text-dim, #99a2b3); }
-.rp .rp-list { display: flex; flex-direction: column; border: 1px solid var(--border, #333); border-radius: 4px; background: var(--bg-0, #0f1115); max-height: 46vh; overflow: auto; }
-.rp .rp-item { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,.05); }
-.rp .rp-item:last-child { border-bottom: none; }
-.rp .rp-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.rp .rp-row > label { flex: 1; min-width: 0; }
+.rp .rp-scroll { display: flex; flex-direction: column; gap: 12px; max-height: 58vh; overflow: auto; padding-right: 2px; }
+.rp .rp-section { display: flex; flex-direction: column; gap: 6px; }
+.rp .rp-section > h4 { margin: 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim, #99a2b3); }
+.rp .rp-card { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px solid var(--border, #333); border-radius: 4px; background: var(--bg-0, #0f1115); }
+.rp .rp-card.error { border-left: 3px solid rgba(255,90,74,.7); }
+.rp .rp-card.warn { border-left: 3px solid rgba(230,185,92,.7); }
+.rp .rp-card-head { display: flex; align-items: center; gap: 10px; }
+.rp .rp-card-head > .rp-title { flex: 1; min-width: 0; color: var(--text, #e6e9ef); }
+.rp .rp-detail { color: var(--text-dim, #99a2b3); line-height: 1.45; }
+.rp .rp-again { color: #ffcf7a; line-height: 1.4; }
+.rp .rp-cant { color: var(--text-faint, #6b7382); font-style: italic; }
+.rp .rp-lines { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; color: var(--text-dim, #99a2b3); line-height: 1.4; }
+.rp .rp-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; padding: 5px 2px; border-bottom: 1px solid rgba(255,255,255,.05); }
+.rp .rp-row:last-child { border-bottom: none; }
+.rp .rp-row > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .rp .rp-badge { flex: none; width: 58px; text-align: center; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; padding: 1px 0; border-radius: 3px; border: 1px solid transparent; }
 .rp .rp-badge.error { color: #ff8a7a; border-color: rgba(255,90,74,.5); }
 .rp .rp-badge.warn { color: #ffcf7a; border-color: rgba(230,185,92,.5); }
 .rp .rp-badge.info { color: var(--text-dim, #99a2b3); border-color: var(--border, #333); }
 .rp .rp-sec { flex: none; width: 40px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--gold, #e6b95c); white-space: pre; }
-.rp .rp-detail { margin-left: 114px; color: var(--text-dim, #99a2b3); line-height: 1.4; }
-.rp .rp-again { margin-left: 114px; color: #ffcf7a; line-height: 1.4; }
-.rp .rp-none { padding: 12px 8px; color: var(--text-faint, #6b7382); }
-.rp .rp-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.rp .rp-actions .rp-grow { flex: 1; }
-.rp .rp-log { color: var(--text-dim, #99a2b3); line-height: 1.4; white-space: pre-wrap; }
-.rp .rp-foot { display: flex; align-items: center; gap: 10px; color: var(--text-faint, #6b7382); }
+.rp .rp-none { padding: 4px 2px; color: var(--text-dim, #99a2b3); line-height: 1.45; }
+.rp .rp-log { color: var(--text-dim, #99a2b3); line-height: 1.4; white-space: pre-wrap; margin-top: 4px; }
+.rp .rp-foot { color: var(--text-faint, #6b7382); line-height: 1.4; }
 `;
 
 /** What Repair keeps for an open map that is not in front. */
 interface Parked {
   original: { fileName: string | null; bytes: Uint8Array } | null;
-  repaired: boolean;
+  analysis: Analysis | null;
+  done: Finding[];
+  auto: number;
   log: string[];
   attempted: Set<string>;
 }
@@ -96,18 +117,21 @@ interface Parked {
 export class Session {
   private handle: DialogHandle | null = null;
   private body: HTMLElement | null = null;
+  private cell: StatusItemHandle | null = null;
   private analysis: Analysis | null = null;
-  private ticks = new Map<string, boolean>();
-  /** Findings the last press tried to repair, so one that comes back is shown as having survived it. */
+  /** Findings the last press tried to repair and that came back, so they are shown as having survived it. */
   private attempted = new Set<string>();
   private original: { fileName: string | null; bytes: Uint8Array } | null = null;
-  private repaired = false;
+  /** What was repaired since the map opened, in the order it was done. */
+  private done: Finding[] = [];
+  /** How many of `done` were made by themselves as the map opened — the first ones. */
+  private auto = 0;
   private log: string[] = [];
   /** The map the fields above are about; the other open maps' copies wait in `parked`. */
   private front: number | null = null;
   private parked = new Map<number, Parked>();
   private busy = false;
-  /** Bumped on every open / close so a check still gathering for the previous map throws its result away. */
+  /** Bumped on every open / close / switch so a check still gathering for the previous map throws its result away. */
   private generation = 0;
 
   private readonly api: PluginApi;
@@ -116,71 +140,103 @@ export class Session {
 
   private t = (text: string, params?: Record<string, string | number>) => this.api.i18n.t(text, params);
 
-  /** The language changed: the findings are written in it, so read the map again and draw the dialog anew. */
+  /** The language changed: the findings are written in it, so read the map again and draw anew. */
   async relabel() {
-    if (!this.handle?.isOpen() || this.busy) return;
+    if (this.busy || !this.analysis || !this.api.document.isOpen()) return;
     const generation = this.generation;
-    this.handle.setTitle(this.t("Repair Map"));
     const analysis = await this.gather();
     if (generation !== this.generation) return;
     this.analysis = analysis;
+    this.handle?.setTitle(this.t("Repair Map"));
     this.render();
+    this.updateCell();
   }
-
-  private get askOnOpen(): boolean { return this.api.storage.get(ASK_KEY, true); }
 
   onDocument(e: DocumentEvent) {
     if (e.reason === "replace") return;
     this.generation++;
     // Whatever dialog was up was about the map that just went, behind or away.
     this.handle?.close();
-    this.ticks.clear();
-    // The map that was in front keeps its original while it stays open, so Restore original is
-    // still there when it comes back; a map that closed takes its copy with it.
+    // The map that was in front keeps what Repair knows of it while it stays open, so Undo
+    // and the status cell are still there when it comes back; a map that closed takes its copy with it.
     const open = new Set(this.api.document.list().map((d) => d.id));
     if (this.front !== null && this.front !== e.id && open.has(this.front)) {
-      this.parked.set(this.front, { original: this.original, repaired: this.repaired, log: this.log, attempted: this.attempted });
+      this.parked.set(this.front, { original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted });
     }
     for (const id of this.parked.keys()) if (!open.has(id)) this.parked.delete(id);
     this.front = e.id;
     const back = e.id === null ? undefined : this.parked.get(e.id);
     if (e.id !== null) this.parked.delete(e.id);
     if (e.reason === "switch" && back) {
-      ({ original: this.original, repaired: this.repaired, log: this.log, attempted: this.attempted } = back);
+      ({ original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted } = back);
+      this.updateCell();
       return;
     }
     this.original = null;
-    this.repaired = false;
+    this.analysis = null;
+    this.done = [];
+    this.auto = 0;
     this.log = [];
     this.attempted = new Set();
+    this.updateCell();
     if (e.reason !== "open") return;
-    // The bytes as they came in, before any repair; kept until the next map.
+    // The bytes as they came in, before any repair; kept until the map closes or another file opens in its place.
     this.original = { fileName: e.fileName, bytes: this.api.document.sections.file() };
+    const mode = modeOf(this.api);
     // The editor is still installing the document when the event fires; let it finish.
-    if (this.askOnOpen) setTimeout(() => { void this.check(true); }, 0);
+    if (mode !== "off") setTimeout(() => { void this.onOpen(mode); }, 0);
   }
 
-  dispose() { this.handle?.close(); }
+  dispose() {
+    this.handle?.close();
+    this.cell?.remove();
+    this.cell = null;
+  }
 
-  /** Analyse the open map; `auto` (on open) only shows the dialog when something is wrong. */
-  async check(auto: boolean) {
+  /**
+   * A map just opened. `auto` repairs the safe findings as the reading of the file and
+   * leaves the rest to the status cell; `ask` opens the dialog when anything is worth it.
+   */
+  private async onOpen(mode: Mode) {
+    const { api } = this;
+    if (!api.document.isOpen() || this.busy) return;
+    const generation = this.generation;
+    this.busy = true;
+    let analysis: Analysis;
+    try {
+      analysis = await this.gather();
+    } finally {
+      this.busy = false;
+    }
+    if (generation !== this.generation) return;
+    this.analysis = analysis;
+    const { safe } = group(analysis.findings);
+    // Not when the user already changed the map while it was being read — a repair
+    // replaces the whole file and would take the change with it — and not on a shared
+    // map, where it would land on everyone else's copy too. The cell offers them instead.
+    const untouched = api.document.info()?.modified !== true && !api.sync?.current();
+    if (mode === "auto" && safe.length > 0 && untouched) {
+      await this.repair(safe, true);
+      return;
+    }
+    this.updateCell();
+    if (mode === "ask" && analysis.counts.error + analysis.counts.warn > 0) this.openDialog();
+  }
+
+  /** Tools ▸ Repair Map…: check again and show the dialog whatever it finds. */
+  async check() {
     const { api } = this;
     if (!api.document.isOpen() || this.busy) return;
     this.original ??= { fileName: api.document.info()?.fileName ?? null, bytes: api.document.sections.file() };
     const generation = this.generation;
     this.busy = true;
-    // A manual check with the dialog up: the footer says so and holds its buttons meanwhile.
     if (this.handle?.isOpen()) this.handle.setBusy(this.t("Checking the map…"));
     try {
       const analysis = await this.gather();
       if (generation !== this.generation) return;
       this.analysis = analysis;
-      const { counts } = analysis;
-      if (auto && counts.error + counts.warn === 0) {
-        if (counts.info > 0) api.ui.status(this.t("Repair: nothing wrong with {name}; {n, plural, one {# note} other {# notes}} (Tools ▸ Repair Map…).", { name: this.name(), n: counts.info }));
-        return;
-      }
-      if (this.handle?.isOpen()) this.render(); else this.open();
+      this.updateCell();
+      if (this.handle?.isOpen()) this.render(); else this.openDialog();
     } finally {
       this.busy = false;
       this.handle?.setBusy(false);
@@ -205,9 +261,25 @@ export class Session {
     return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage(), t: this.t });
   }
 
+  /* ── The status bar cell ────────────────────────────────── */
+
+  private updateCell() {
+    const shown = this.analysis ? cellText(group(this.analysis.findings), this.done.length, this.t) : null;
+    if (!shown) {
+      this.cell?.remove();
+      this.cell = null;
+      return;
+    }
+    const spec = { text: shown.text, warn: shown.warn, busy: this.busy, title: this.t("Repair Map: what was repaired, and what is left") };
+    if (this.cell?.isShown()) this.cell.set(spec);
+    else this.cell = this.api.ui.statusItem({ ...spec, onClick: () => this.openDialog() });
+  }
+
   /* ── The dialog ─────────────────────────────────────────── */
 
-  private open() {
+  private openDialog() {
+    if (!this.analysis) { void this.check(); return; }
+    if (this.handle?.isOpen()) { this.render(); return; }
     this.handle = this.api.ui.dialog({
       title: this.t("Repair Map"),
       size: "lg",
@@ -219,95 +291,92 @@ export class Session {
     });
   }
 
-  private selected(): Finding[] {
-    return (this.analysis?.findings ?? []).filter((f) => f.repair && (this.ticks.get(f.id) ?? f.recommended));
-  }
-
   private render() {
-    const { api, body, analysis } = this;
+    const { api, body, analysis, t } = this;
     if (!body || !analysis) return;
     const { el, widgets } = api.ui;
-    const { t } = this;
     body.replaceChildren();
     const root = el("div", { className: "rp" }, el("style", {}, STYLE));
+    const { safe, review, notes } = group(analysis.findings);
 
-    const { counts, findings } = analysis;
-    const total = findings.length;
-    const summary = total === 0
-      ? t("Nothing to repair.")
-      : [
-        counts.error && t("{n, plural, one {# error} other {# errors}}", { n: counts.error }),
-        counts.warn && t("{n, plural, one {# warning} other {# warnings}}", { n: counts.warn }),
-        counts.info && t("{n, plural, one {# note} other {# notes}}", { n: counts.info }),
-      ].filter(Boolean).join(", ");
-    root.append(el("div", { className: "rp-head" }, el("b", {}, this.name()), el("span", { className: "rp-dim" }, summary)));
+    root.append(el("div", { className: "rp-head" }, el("b", {}, this.name()), el("span", { className: "rp-dim" }, this.summary(safe.length, review.length))));
+    const scroll = el("div", { className: "rp-scroll" });
 
-    const list = el("div", { className: "rp-list" });
-    if (total === 0) list.append(el("div", { className: "rp-none" }, t("Every section is where the game expects it, at the size it reads, with nothing repeated or left over.")));
-    for (const f of findings) {
-      const tick = widgets.checkbox(f.title, {
-        value: f.repair ? (this.ticks.get(f.id) ?? f.recommended) : false,
-        disabled: !f.repair,
-        title: f.repair ? (f.recommended ? t("Recommended") : t("Optional — read the note first")) : t("Nothing the plugin can do about this one"),
-        onChange: (v) => { this.ticks.set(f.id, v); this.relabelRepairButton(); },
-      });
-      const row = el("div", { className: "rp-row" },
-        el("span", { className: `rp-badge ${f.level}`, title: t(LEVEL_LABEL[f.level]) }, t(LEVEL_LABEL[f.level])),
-        el("span", { className: "rp-sec", title: f.section ? (readableName(f.section) ? api.document.sections.spec(f.section)?.what ?? "" : describeName(f.section)) : t("the file") }, f.section ? (readableName(f.section) ? f.section : "????") : t("file")),
-        tick,
-      );
-      const item = el("div", { className: "rp-item" }, row, el("div", { className: "rp-detail" }, f.detail));
-      if (this.attempted.has(f.id)) item.append(el("div", { className: "rp-again" }, t("Still reported after the last repair.")));
-      list.append(item);
+    if (safe.length > 0) {
+      const section = el("div", { className: "rp-section" }, el("h4", {}, t("Safe to repair")));
+      for (const f of safe) section.append(this.card(f, null));
+      section.append(el("div", {}, widgets.button(t("Repair {n, plural, one {this one} other {all #}}", { n: safe.length }), { primary: true, disabled: this.busy, onClick: () => { void this.repair(safe, false); } })));
+      scroll.append(section);
     }
-    root.append(list);
 
-    const repairable = findings.filter((f) => f.repair);
-    const setAll = (pick: (f: Finding) => boolean) => { for (const f of repairable) this.ticks.set(f.id, pick(f)); this.render(); };
-    const chosen = this.selected().length;
-    this.repairButton = widgets.button(this.repairLabel(chosen), { primary: true, onClick: () => { void this.repair(); } });
-    const actions = el("div", { className: "rp-actions" },
-      widgets.button(t("Recommended"), { ghost: true, disabled: repairable.length === 0, title: t("Tick the repairs that only write what the game already does, or restore what the editor needs"), onClick: () => setAll((f) => f.recommended) }),
-      widgets.button(t("All"), { ghost: true, disabled: repairable.length === 0, onClick: () => setAll(() => true) }),
-      widgets.button(t("None"), { ghost: true, disabled: repairable.length === 0, onClick: () => setAll(() => false) }),
-      el("span", { className: "rp-grow" }),
-      this.original && this.repaired
-        ? widgets.button(t("Restore original"), { title: t("Put the file back as it was when it opened"), onClick: () => { void this.restore(); } })
-        : null,
-      this.repairButton,
-    );
-    root.append(actions);
-    this.updateRepairButton();
+    if (review.length > 0) {
+      const section = el("div", { className: "rp-section" }, el("h4", {}, t("Needs your decision")));
+      for (const f of review) section.append(this.card(f, t("Apply")));
+      scroll.append(section);
+    }
 
-    if (this.log.length > 0) root.append(el("div", { className: "rp-log" }, this.log.join("\n")));
+    if (safe.length + review.length === 0) {
+      scroll.append(el("div", { className: "rp-none" }, this.done.length > 0
+        ? t("Nothing else to repair.")
+        : t("Every section is where the game expects it, at the size it reads, with nothing repeated or left over.")));
+    }
 
-    root.append(el("div", { className: "rp-foot" },
-      widgets.checkbox(t("Check maps when they open"), { value: this.askOnOpen, onChange: (v) => api.storage.set(ASK_KEY, v) }),
-      el("span", {}, t("A repair rewrites the file and clears the undo history, as Section Explorer and Resize do.")),
-    ));
+    if (this.done.length > 0) {
+      const fold = widgets.fold({ text: this.auto === this.done.length ? t("Repaired when the map opened ({n})", { n: this.done.length }) : t("Repaired ({n})", { n: this.done.length }) });
+      fold.mark("✓", "ok");
+      fold.body.append(el("ul", { className: "rp-lines" }, ...this.done.map((f) => el("li", {}, f.title))));
+      if (this.log.length > 0) fold.body.append(el("div", { className: "rp-log" }, this.log.join("\n")));
+      if (this.original) fold.action(widgets.button(t("Undo"), { ghost: true, disabled: this.busy, title: t("Put the file back as it was when it opened"), onClick: () => { void this.restore(); } }));
+      scroll.append(fold);
+    } else if (this.log.length > 0) {
+      scroll.append(el("div", { className: "rp-log" }, this.log.join("\n")));
+    }
+
+    if (notes.length > 0) {
+      const fold = widgets.fold({ text: t("{n, plural, one {# note} other {# notes}}", { n: notes.length }) });
+      for (const f of notes) fold.body.append(this.card(f, t("Apply")));
+      scroll.append(fold);
+    }
+
+    if (analysis.findings.length > 0) {
+      const fold = widgets.fold({ text: t("Advanced: every finding by section") });
+      for (const f of analysis.findings) {
+        fold.body.append(el("div", { className: "rp-row" },
+          el("span", { className: `rp-badge ${f.level}` }, t(LEVEL_LABEL[f.level])),
+          el("span", { className: "rp-sec", title: f.section ? (readableName(f.section) ? api.document.sections.spec(f.section)?.what ?? "" : describeName(f.section)) : t("the file") }, f.section ? (readableName(f.section) ? f.section : "????") : t("file")),
+          el("div", {}, el("span", {}, f.title), el("span", { className: "rp-detail" }, f.detail)),
+        ));
+      }
+      scroll.append(fold);
+    }
+
+    root.append(scroll);
+    root.append(el("div", { className: "rp-foot" }, t("A repair rewrites the file and clears the undo history, as Section Explorer and Resize do. Edit ▸ Preferences ▸ Plugins ▸ Repair chooses what happens when a map opens.")));
     body.append(root);
   }
 
-  private repairButton: ButtonElement | null = null;
-
-  private repairLabel(n: number) { return n === 0 ? this.t("Repair") : this.t("Repair {n} selected", { n }); }
-
-  /** The count in the button's label follows the ticks; the ring, when there is one, is a child node before the text. */
-  private relabelRepairButton() {
-    if (!this.repairButton) return;
-    const n = this.selected().length;
-    const text = this.repairLabel(n);
-    const last = this.repairButton.lastChild;
-    if (last && last.nodeType === Node.TEXT_NODE) last.textContent = text; else this.repairButton.append(text);
-    this.updateRepairButton();
+  /** The line under the map's name. */
+  private summary(safe: number, review: number): string {
+    const { t } = this;
+    const parts: string[] = [];
+    if (this.auto > 0) parts.push(t("{n, plural, one {# problem was} other {# problems were}} repaired when the map opened. Each writes what the game already does with the file, or puts back something the editor needs.", { n: this.auto }));
+    const since = this.done.length - this.auto;
+    if (since > 0) parts.push(this.auto > 0 ? t("{n} more repaired since.", { n: since }) : t("{n, plural, one {# problem} other {# problems}} repaired.", { n: since }));
+    if (safe > 0) parts.push(t("{n, plural, one {# problem is} other {# problems are}} safe to repair.", { n: safe }));
+    if (review > 0) parts.push(t("{n, plural, one {# thing needs} other {# things need}} your decision. Read what each one changes first.", { n: review }));
+    return parts.join(" ");
   }
 
-  private updateRepairButton() {
-    const n = this.selected().length;
-    if (!this.repairButton) return;
-    // `setBusy` puts the ring in front of the label and takes it away again; the label is set after, since the ring goes inside the button.
-    this.repairButton.setBusy(this.busy);
-    this.repairButton.disabled = n === 0 || this.busy;
+  /** One finding: what it is, what the game does about it, and its button (`action` null for none). */
+  private card(f: Finding, action: string | null): HTMLElement {
+    const { api, t } = this;
+    const { el, widgets } = api.ui;
+    const head = el("div", { className: "rp-card-head" }, el("span", { className: "rp-title" }, f.title));
+    if (action && f.repair) head.append(widgets.button(action, { disabled: this.busy, onClick: () => { void this.repair([f], false); } }));
+    const card = el("div", { className: `rp-card ${f.level}` }, head, el("div", { className: "rp-detail" }, f.detail));
+    if (!f.repair && f.level !== "info") card.append(el("div", { className: "rp-cant" }, t("Nothing the plugin can change. This is how the game reads the map.")));
+    if (this.attempted.has(f.id)) card.append(el("div", { className: "rp-again" }, t("Still reported after the last repair.")));
+    return card;
   }
 
   /* ── Doing it ───────────────────────────────────────────── */
@@ -334,22 +403,26 @@ export class Session {
     return { strings, units, changed: r.changed };
   }
 
-  private async repair() {
+  /**
+   * Apply `chosen`. `asOpened` is the on-open pass: every step is taken as the reading of
+   * the file that was opened, so the map is left unmodified — the steps that go through
+   * the editor's model (a rebuild, the ISOM) are settled the same way at the end.
+   */
+  private async repair(chosen: Finding[], asOpened: boolean) {
     const { api, t } = this;
-    const chosen = this.selected();
     if (chosen.length === 0 || this.busy || !api.document.isOpen()) return;
     const { sections } = api.document;
     const generation = this.generation;
     this.busy = true;
-    this.updateRepairButton();
     this.handle?.setBusy(t("Repairing…"));
+    this.cell?.set({ busy: true });
     const done: string[] = [];
     try {
       const outcome = applyRepairs(parseChunks(sections.file()), chosen.map((f) => f.repair!), { known: sections.known(), defaults: (n) => sections.defaults(n), t });
       const hostRepairs = new Set(["rebuild", "rebuild-isom", "set-strings"]);
       const byteLevel = chosen.filter((f) => !hostRepairs.has(f.repair!.kind));
       if (byteLevel.length > 0) {
-        const r = sections.replaceFile(serializeChunks(outcome.file));
+        const r = sections.replaceFile(serializeChunks(outcome.file), { asOpened });
         done.push(r.warnings.length > 0
           ? t("{n, plural, one {# repair} other {# repairs}} written to the file — the parser still says: {warnings}", { n: byteLevel.length, warnings: r.warnings.join("; ") })
           : t("{n, plural, one {# repair} other {# repairs}} written to the file", { n: byteLevel.length }));
@@ -398,18 +471,21 @@ export class Session {
         });
         done.push(note);
       }
+      // The rebuild and the ISOM went through the editor's model, which marks the map
+      // modified; on open they are as much the reading of the file as the bytes above.
+      if (asOpened && (outcome.rebuild.length > 0 || outcome.rebuildIsom)) sections.replaceFile(sections.file(), { asOpened: true });
       for (const s of outcome.skipped) done.push(t("skipped: {why}", { why: s }));
-      this.repaired = true;
-      // The event listener sees a "replace" and leaves the original alone; a fresh look shows what is left.
-      // Nothing is re-armed: a finding that survives its own repair used to come back ticked with the
-      // button live, which is a press that can only do nothing. Ticking again is the user's to do.
-      this.ticks.clear();
-      this.attempted = new Set(chosen.map((f) => f.id));
-      api.ui.status(t("Repair: {done}.", { done: done.join("; ") }));
+      if (!asOpened) api.ui.status(t("Repair: {done}.", { done: done.join("; ") }));
       this.log = [t("Done: {done}.", { done: done.join("; ") })];
       if (generation === this.generation) {
+        // The event listener sees a "replace" and leaves the original alone; a fresh look shows what is left.
+        // A finding that survives its own repair is not offered again as if new: it says so.
         this.analysis = await this.gather();
-        for (const f of this.analysis.findings) this.ticks.set(f.id, false);
+        const left = new Set(this.analysis.findings.map((f) => f.id));
+        const repaired = chosen.filter((f) => !left.has(f.id));
+        this.attempted = new Set(chosen.filter((f) => left.has(f.id)).map((f) => f.id));
+        this.done = [...this.done, ...repaired];
+        if (asOpened) this.auto = repaired.length;
       }
     } catch (err) {
       this.log = [t("Repair failed: {error}", { error: err instanceof Error ? err.message : String(err) })];
@@ -417,7 +493,11 @@ export class Session {
     } finally {
       this.busy = false;
       this.handle?.setBusy(false);
-      if (generation === this.generation) this.render();
+      this.cell?.set({ busy: false });
+      if (generation === this.generation) {
+        this.render();
+        this.updateCell();
+      }
     }
   }
 
@@ -426,12 +506,13 @@ export class Session {
     if (!this.original || this.busy || !api.document.isOpen()) return;
     const generation = this.generation;
     this.busy = true;
-    this.updateRepairButton();
     this.handle?.setBusy(this.t("Restoring the original…"));
     try {
+      // Marked modified, as any edit: whether the file on disk is still the original (it
+      // is not after a Save) is not something the plugin can tell.
       api.document.sections.replaceFile(this.original.bytes);
-      this.repaired = false;
-      this.ticks.clear();
+      this.done = [];
+      this.auto = 0;
       this.attempted.clear();
       this.log = [this.t("The file is back as it was when it opened.")];
       api.ui.status(this.t("Repair: {name} restored to the file that was opened.", { name: this.name() }));
@@ -439,7 +520,10 @@ export class Session {
     } finally {
       this.busy = false;
       this.handle?.setBusy(false);
-      if (generation === this.generation) this.render();
+      if (generation === this.generation) {
+        this.render();
+        this.updateCell();
+      }
     }
   }
 }
