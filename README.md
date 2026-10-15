@@ -164,7 +164,9 @@ rebuild or the ISOM went through the editor's model, one last
 `replaceFile(sections.file(), { asOpened: true })` settles them the same way, so the map
 is left unmodified with an empty history. A map open to view only (a replay's, in
 Aftermath) takes only the byte-level repairs on open: it refuses everything that goes
-through the editor's model, so the string, rebuild and ISOM steps are left for a copy. `colors.ts` holds the `TextHelpers` interface `analyze` takes its four
+through the editor's model, so the string, rebuild and ISOM steps are left for a copy.
+Its dialog lists what is left without a button and points at File ▸ Edit a Copy, and the
+copy, which the editor opens as a new map, is checked like one that was opened. `colors.ts` holds the `TextHelpers` interface `analyze` takes its four
 text readers through — `api.text.bleedingLines` / `.fixBleeding` and `.stackedLines` /
 `.flattenStacks` — so the plugin carries no copy of the control-byte numbering, which is
 easy to get wrong and is worth having wrong in only one place. The stacking pair was

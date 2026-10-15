@@ -104,6 +104,7 @@ const STYLE = `
 .rp .rp-sec { flex: none; width: 40px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--gold, #e6b95c); white-space: pre; }
 .rp .rp-none { padding: 4px 2px; color: var(--text-dim, #99a2b3); line-height: 1.45; }
 .rp .rp-log { color: var(--text-dim, #99a2b3); line-height: 1.4; white-space: pre-wrap; margin-top: 4px; }
+.rp .rp-view-only { padding: 6px 10px; border-radius: 4px; border: 1px solid rgba(230,185,92,.4); color: var(--text, #e6e9ef); line-height: 1.45; }
 .rp .rp-foot { color: var(--text-faint, #6b7382); line-height: 1.4; }
 `;
 
@@ -182,7 +183,9 @@ export class Session {
     this.log = [];
     this.attempted = new Set();
     this.updateCell();
-    if (e.reason !== "open") return;
+    // A new map is checked as well: File ▸ Edit a Copy opens one, from a map that may still
+    // carry what the on-open pass could not repair (all but the bytes, on a view-only map).
+    if (e.reason !== "open" && e.reason !== "new") return;
     // The bytes as they came in, before any repair; kept until the map closes or another file opens in its place.
     this.original = { fileName: e.fileName, bytes: this.api.document.sections.file() };
     const mode = modeOf(this.api);
@@ -213,7 +216,9 @@ export class Session {
     }
     if (generation !== this.generation) return;
     this.analysis = analysis;
-    const { safe } = group(analysis.findings);
+    // A map open to look at only (a replay's) takes the bytes as the reading of its file and
+    // nothing that goes through the editor's model: the on-open pass does the byte-level part.
+    const safe = group(analysis.findings).safe.filter((f) => !this.viewOnly() || !HOST_REPAIRS.has(f.repair!.kind));
     // Not when the user already changed the map while it was being read — a repair
     // replaces the whole file and would take the change with it — and not on a shared
     // map, where it would land on everyone else's copy too. The cell offers them instead.
@@ -245,6 +250,9 @@ export class Session {
       this.handle?.setBusy(false);
     }
   }
+
+  /** A map open to look at only (a replay's): the editor refuses every repair, so the dialog offers none. */
+  private viewOnly(): boolean { return (this.api.document.info() as { viewOnly?: boolean } | null)?.viewOnly === true; }
 
   private name(): string { return this.api.document.info()?.fileName ?? this.api.document.info()?.name ?? this.t("the map"); }
 
@@ -301,20 +309,22 @@ export class Session {
     body.replaceChildren();
     const root = el("div", { className: "rp" }, el("style", {}, STYLE));
     const { safe, review, notes } = group(analysis.findings);
+    const viewOnly = this.viewOnly();
 
     root.append(el("div", { className: "rp-head" }, el("b", {}, this.name()), el("span", { className: "rp-dim" }, this.summary(safe.length, review.length))));
+    if (viewOnly) root.append(el("div", { className: "rp-view-only" }, t("This map is open to view only, so nothing here can be repaired in it. File ▸ Edit a Copy opens a copy you can repair.")));
     const scroll = el("div", { className: "rp-scroll" });
 
     if (safe.length > 0) {
       const section = el("div", { className: "rp-section" }, el("h4", {}, t("Safe to repair")));
       for (const f of safe) section.append(this.card(f, null));
-      section.append(el("div", {}, widgets.button(t("Repair {n, plural, one {this one} other {all #}}", { n: safe.length }), { primary: true, disabled: this.busy, onClick: () => { void this.repair(safe, false); } })));
+      if (!viewOnly) section.append(el("div", {}, widgets.button(t("Repair {n, plural, one {this one} other {all #}}", { n: safe.length }), { primary: true, disabled: this.busy, onClick: () => { void this.repair(safe, false); } })));
       scroll.append(section);
     }
 
     if (review.length > 0) {
       const section = el("div", { className: "rp-section" }, el("h4", {}, t("Needs your decision")));
-      for (const f of review) section.append(this.card(f, t("Apply")));
+      for (const f of review) section.append(this.card(f, viewOnly ? null : t("Apply")));
       scroll.append(section);
     }
 
@@ -329,7 +339,7 @@ export class Session {
       fold.mark("✓", "ok");
       fold.body.append(el("ul", { className: "rp-lines" }, ...this.done.map((f) => el("li", {}, f.title))));
       if (this.log.length > 0) fold.body.append(el("div", { className: "rp-log" }, this.log.join("\n")));
-      if (this.original) fold.action(widgets.button(t("Undo"), { ghost: true, disabled: this.busy, title: t("Put the file back as it was when it opened"), onClick: () => { void this.restore(); } }));
+      if (this.original && !viewOnly) fold.action(widgets.button(t("Undo"), { ghost: true, disabled: this.busy, title: t("Put the file back as it was when it opened"), onClick: () => { void this.restore(); } }));
       scroll.append(fold);
     } else if (this.log.length > 0) {
       scroll.append(el("div", { className: "rp-log" }, this.log.join("\n")));
@@ -337,7 +347,7 @@ export class Session {
 
     if (notes.length > 0) {
       const fold = widgets.fold({ text: t("{n, plural, one {# note} other {# notes}}", { n: notes.length }) });
-      for (const f of notes) fold.body.append(this.card(f, t("Apply")));
+      for (const f of notes) fold.body.append(this.card(f, viewOnly ? null : t("Apply")));
       scroll.append(fold);
     }
 
@@ -354,7 +364,7 @@ export class Session {
     }
 
     root.append(scroll);
-    root.append(el("div", { className: "rp-foot" }, t("A repair rewrites the file and clears the undo history, as Section Explorer and Resize do. Edit ▸ Preferences ▸ Plugins ▸ Repair chooses what happens when a map opens.")));
+    if (!viewOnly) root.append(el("div", { className: "rp-foot" }, t("A repair rewrites the file and clears the undo history, as Section Explorer and Resize do. Edit ▸ Preferences ▸ Plugins ▸ Repair chooses what happens when a map opens.")));
     body.append(root);
   }
 
@@ -365,8 +375,9 @@ export class Session {
     if (this.auto > 0) parts.push(t("{n, plural, one {# problem was} other {# problems were}} repaired when the map opened. Each writes what the game already does with the file, or puts back something the editor needs.", { n: this.auto }));
     const since = this.done.length - this.auto;
     if (since > 0) parts.push(this.auto > 0 ? t("{n} more repaired since.", { n: since }) : t("{n, plural, one {# problem} other {# problems}} repaired.", { n: since }));
-    if (safe > 0) parts.push(t("{n, plural, one {# problem is} other {# problems are}} safe to repair.", { n: safe }));
-    if (review > 0) parts.push(t("{n, plural, one {# thing needs} other {# things need}} your decision. Read what each one changes first.", { n: review }));
+    // On a view-only map nothing below can be acted on, and the line under this one says so.
+    if (safe > 0 && !this.viewOnly()) parts.push(t("{n, plural, one {# problem is} other {# problems are}} safe to repair.", { n: safe }));
+    if (review > 0 && !this.viewOnly()) parts.push(t("{n, plural, one {# thing needs} other {# things need}} your decision. Read what each one changes first.", { n: review }));
     return parts.join(" ");
   }
 
@@ -413,11 +424,6 @@ export class Session {
    */
   private async repair(chosen: Finding[], asOpened: boolean) {
     const { api, t } = this;
-    // A map open to look at only (a replay's) takes the bytes as the reading of its file and
-    // nothing that goes through the editor's model: the on-open pass does the byte-level part.
-    if (asOpened && (api.document.info() as { viewOnly?: boolean } | null)?.viewOnly === true) {
-      chosen = chosen.filter((f) => !HOST_REPAIRS.has(f.repair!.kind));
-    }
     if (chosen.length === 0 || this.busy || !api.document.isOpen()) return;
     const { sections } = api.document;
     const generation = this.generation;

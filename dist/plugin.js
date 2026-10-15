@@ -995,6 +995,7 @@ var KO = {
   "Nothing else to repair.": "\uB354 \uBCF5\uAD6C\uD560 \uAC83\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.",
   "Repaired when the map opened ({n})": "\uB9F5\uC744 \uC5F4 \uB54C \uBCF5\uAD6C\uD568 ({n})",
   "Repaired ({n})": "\uBCF5\uAD6C\uD568 ({n})",
+  "This map is open to view only, so nothing here can be repaired in it. File \u25B8 Edit a Copy opens a copy you can repair.": "\uC774 \uB9F5\uC740 \uBCF4\uAE30 \uC804\uC6A9\uC73C\uB85C \uC5F4\uB824 \uC788\uC5B4 \uC5EC\uAE30\uC11C\uB294 \uC544\uBB34\uAC83\uB3C4 \uBCF5\uAD6C\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. \uD30C\uC77C \u25B8 \uC0AC\uBCF8 \uD3B8\uC9D1\uC73C\uB85C \uBCF5\uAD6C\uD560 \uC218 \uC788\uB294 \uC0AC\uBCF8\uC744 \uC5EC\uC138\uC694.",
   "Undo": "\uB418\uB3CC\uB9AC\uAE30",
   "Advanced: every finding by section": "\uACE0\uAE09: \uC139\uC158\uBCC4 \uBAA8\uB4E0 \uD56D\uBAA9",
   "A repair rewrites the file and clears the undo history, as Section Explorer and Resize do. Edit \u25B8 Preferences \u25B8 Plugins \u25B8 Repair chooses what happens when a map opens.": "\uBCF5\uAD6C\uB294 \uC139\uC158 \uD0D0\uC0C9\uAE30\uB098 \uD06C\uAE30 \uC870\uC808\uCC98\uB7FC \uD30C\uC77C\uC744 \uB2E4\uC2DC \uC4F0\uACE0 \uC2E4\uD589 \uCDE8\uC18C \uAE30\uB85D\uC744 \uC9C0\uC6C1\uB2C8\uB2E4. \uB9F5\uC744 \uC5F4 \uB54C \uBB34\uC5C7\uC744 \uD560\uC9C0\uB294 \uD3B8\uC9D1 \u25B8 \uD658\uACBD \uC124\uC815 \u25B8 \uD50C\uB7EC\uADF8\uC778 \u25B8 \uBCF5\uAD6C\uC5D0\uC11C \uACE0\uB985\uB2C8\uB2E4.",
@@ -1084,6 +1085,7 @@ var STYLE = `
 .rp .rp-sec { flex: none; width: 40px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--gold, #e6b95c); white-space: pre; }
 .rp .rp-none { padding: 4px 2px; color: var(--text-dim, #99a2b3); line-height: 1.45; }
 .rp .rp-log { color: var(--text-dim, #99a2b3); line-height: 1.4; white-space: pre-wrap; margin-top: 4px; }
+.rp .rp-view-only { padding: 6px 10px; border-radius: 4px; border: 1px solid rgba(230,185,92,.4); color: var(--text, #e6e9ef); line-height: 1.45; }
 .rp .rp-foot { color: var(--text-faint, #6b7382); line-height: 1.4; }
 `;
 var Session = class {
@@ -1145,7 +1147,7 @@ var Session = class {
     this.log = [];
     this.attempted = /* @__PURE__ */ new Set();
     this.updateCell();
-    if (e.reason !== "open") return;
+    if (e.reason !== "open" && e.reason !== "new") return;
     this.original = { fileName: e.fileName, bytes: this.api.document.sections.file() };
     const mode = modeOf(this.api);
     if (mode !== "off") setTimeout(() => {
@@ -1174,7 +1176,7 @@ var Session = class {
     }
     if (generation !== this.generation) return;
     this.analysis = analysis;
-    const { safe } = group(analysis.findings);
+    const safe = group(analysis.findings).safe.filter((f) => !this.viewOnly() || !HOST_REPAIRS.has(f.repair.kind));
     const untouched = api.document.info()?.modified !== true && !api.sync?.current();
     if (mode === "auto" && safe.length > 0 && untouched) {
       await this.repair(safe, true);
@@ -1202,6 +1204,10 @@ var Session = class {
       this.busy = false;
       this.handle?.setBusy(false);
     }
+  }
+  /** A map open to look at only (a replay's): the editor refuses every repair, so the dialog offers none. */
+  viewOnly() {
+    return this.api.document.info()?.viewOnly === true;
   }
   name() {
     return this.api.document.info()?.fileName ?? this.api.document.info()?.name ?? this.t("the map");
@@ -1263,19 +1269,21 @@ var Session = class {
     body.replaceChildren();
     const root = el("div", { className: "rp" }, el("style", {}, STYLE));
     const { safe, review, notes } = group(analysis.findings);
+    const viewOnly = this.viewOnly();
     root.append(el("div", { className: "rp-head" }, el("b", {}, this.name()), el("span", { className: "rp-dim" }, this.summary(safe.length, review.length))));
+    if (viewOnly) root.append(el("div", { className: "rp-view-only" }, t("This map is open to view only, so nothing here can be repaired in it. File \u25B8 Edit a Copy opens a copy you can repair.")));
     const scroll = el("div", { className: "rp-scroll" });
     if (safe.length > 0) {
       const section = el("div", { className: "rp-section" }, el("h4", {}, t("Safe to repair")));
       for (const f of safe) section.append(this.card(f, null));
-      section.append(el("div", {}, widgets.button(t("Repair {n, plural, one {this one} other {all #}}", { n: safe.length }), { primary: true, disabled: this.busy, onClick: () => {
+      if (!viewOnly) section.append(el("div", {}, widgets.button(t("Repair {n, plural, one {this one} other {all #}}", { n: safe.length }), { primary: true, disabled: this.busy, onClick: () => {
         void this.repair(safe, false);
       } })));
       scroll.append(section);
     }
     if (review.length > 0) {
       const section = el("div", { className: "rp-section" }, el("h4", {}, t("Needs your decision")));
-      for (const f of review) section.append(this.card(f, t("Apply")));
+      for (const f of review) section.append(this.card(f, viewOnly ? null : t("Apply")));
       scroll.append(section);
     }
     if (safe.length + review.length === 0) {
@@ -1286,7 +1294,7 @@ var Session = class {
       fold.mark("\u2713", "ok");
       fold.body.append(el("ul", { className: "rp-lines" }, ...this.done.map((f) => el("li", {}, f.title))));
       if (this.log.length > 0) fold.body.append(el("div", { className: "rp-log" }, this.log.join("\n")));
-      if (this.original) fold.action(widgets.button(t("Undo"), { ghost: true, disabled: this.busy, title: t("Put the file back as it was when it opened"), onClick: () => {
+      if (this.original && !viewOnly) fold.action(widgets.button(t("Undo"), { ghost: true, disabled: this.busy, title: t("Put the file back as it was when it opened"), onClick: () => {
         void this.restore();
       } }));
       scroll.append(fold);
@@ -1295,7 +1303,7 @@ var Session = class {
     }
     if (notes.length > 0) {
       const fold = widgets.fold({ text: t("{n, plural, one {# note} other {# notes}}", { n: notes.length }) });
-      for (const f of notes) fold.body.append(this.card(f, t("Apply")));
+      for (const f of notes) fold.body.append(this.card(f, viewOnly ? null : t("Apply")));
       scroll.append(fold);
     }
     if (analysis.findings.length > 0) {
@@ -1312,7 +1320,7 @@ var Session = class {
       scroll.append(fold);
     }
     root.append(scroll);
-    root.append(el("div", { className: "rp-foot" }, t("A repair rewrites the file and clears the undo history, as Section Explorer and Resize do. Edit \u25B8 Preferences \u25B8 Plugins \u25B8 Repair chooses what happens when a map opens.")));
+    if (!viewOnly) root.append(el("div", { className: "rp-foot" }, t("A repair rewrites the file and clears the undo history, as Section Explorer and Resize do. Edit \u25B8 Preferences \u25B8 Plugins \u25B8 Repair chooses what happens when a map opens.")));
     body.append(root);
   }
   /** The line under the map's name. */
@@ -1322,8 +1330,8 @@ var Session = class {
     if (this.auto > 0) parts.push(t("{n, plural, one {# problem was} other {# problems were}} repaired when the map opened. Each writes what the game already does with the file, or puts back something the editor needs.", { n: this.auto }));
     const since = this.done.length - this.auto;
     if (since > 0) parts.push(this.auto > 0 ? t("{n} more repaired since.", { n: since }) : t("{n, plural, one {# problem} other {# problems}} repaired.", { n: since }));
-    if (safe > 0) parts.push(t("{n, plural, one {# problem is} other {# problems are}} safe to repair.", { n: safe }));
-    if (review > 0) parts.push(t("{n, plural, one {# thing needs} other {# things need}} your decision. Read what each one changes first.", { n: review }));
+    if (safe > 0 && !this.viewOnly()) parts.push(t("{n, plural, one {# problem is} other {# problems are}} safe to repair.", { n: safe }));
+    if (review > 0 && !this.viewOnly()) parts.push(t("{n, plural, one {# thing needs} other {# things need}} your decision. Read what each one changes first.", { n: review }));
     return parts.join(" ");
   }
   /** One finding: what it is, what the game does about it, and its button (`action` null for none). */
@@ -1368,9 +1376,6 @@ var Session = class {
    */
   async repair(chosen, asOpened) {
     const { api, t } = this;
-    if (asOpened && api.document.info()?.viewOnly === true) {
-      chosen = chosen.filter((f) => !HOST_REPAIRS.has(f.repair.kind));
-    }
     if (chosen.length === 0 || this.busy || !api.document.isOpen()) return;
     const { sections } = api.document;
     const generation = this.generation;
