@@ -85,6 +85,7 @@ export const KO: Record<string, string> = {
   "no section at {index}": "{index}번 섹션 없음",
   "no string stacked text on a line": "한 줄에 텍스트를 겹친 문자열 없음",
   "no trailing bytes": "뒤에 남는 바이트 없음",
+  "no copy of {name} the game takes": "게임이 읽는 {name} 사본 없음",
   "note": "참고",
   "nothing to rebuild": "다시 만들 것 없음",
   "nothing to write for {name}": "{name}에 쓸 것 없음",

@@ -29,6 +29,9 @@ import { cellText, group, readMode, type Mode } from "./plan";
 import { msg } from "./i18n";
 import { KO } from "./ko";
 
+/** Repairs made through the editor's model rather than the file's bytes; a view-only map refuses them. */
+const HOST_REPAIRS: ReadonlySet<string> = new Set(["rebuild", "rebuild-isom", "set-strings"]);
+
 export default function activate(api: PluginApi) {
   api.i18n.register({ ko: KO });
   const session = new Session(api);
@@ -410,6 +413,11 @@ export class Session {
    */
   private async repair(chosen: Finding[], asOpened: boolean) {
     const { api, t } = this;
+    // A map open to look at only (a replay's) takes the bytes as the reading of its file and
+    // nothing that goes through the editor's model: the on-open pass does the byte-level part.
+    if (asOpened && (api.document.info() as { viewOnly?: boolean } | null)?.viewOnly === true) {
+      chosen = chosen.filter((f) => !HOST_REPAIRS.has(f.repair!.kind));
+    }
     if (chosen.length === 0 || this.busy || !api.document.isOpen()) return;
     const { sections } = api.document;
     const generation = this.generation;
@@ -419,8 +427,7 @@ export class Session {
     const done: string[] = [];
     try {
       const outcome = applyRepairs(parseChunks(sections.file()), chosen.map((f) => f.repair!), { known: sections.known(), defaults: (n) => sections.defaults(n), t });
-      const hostRepairs = new Set(["rebuild", "rebuild-isom", "set-strings"]);
-      const byteLevel = chosen.filter((f) => !hostRepairs.has(f.repair!.kind));
+      const byteLevel = chosen.filter((f) => !HOST_REPAIRS.has(f.repair!.kind));
       if (byteLevel.length > 0) {
         const r = sections.replaceFile(serializeChunks(outcome.file), { asOpened });
         done.push(r.warnings.length > 0

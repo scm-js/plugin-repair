@@ -94,7 +94,13 @@ export type CombineMode = "overlay" | "append" | "last" | "first";
  * over the front of a zeroed fixed buffer in file order, `append` keeps every record,
  * `last` / `first` take one occurrence. Null when the name is absent.
  */
-export function combine(parts: Chunk[], mode: CombineMode, size?: number | null): Uint8Array | null {
+/**
+ * The bytes the game acts on for the chunks of one name. For "last" and "first", a chunk
+ * shorter than `minimum` is passed over — the game neither counts it nor lets it replace an
+ * earlier one (a protected map's 1-byte `STR ` after the real table).
+ */
+export function combine(parts: Chunk[], mode: CombineMode, size?: number | null, minimum = 0): Uint8Array | null {
+  if (mode === "last" || mode === "first") parts = parts.filter((p) => p.data.length >= minimum);
   if (parts.length === 0) return null;
   switch (mode) {
     case "first": return parts[0].data.slice();
@@ -116,3 +122,9 @@ export function combine(parts: Chunk[], mode: CombineMode, size?: number | null)
 
 export const u16 = (b: Uint8Array, at: number) => (at + 2 <= b.length ? b[at] | (b[at + 1] << 8) : null);
 export const u32 = (b: Uint8Array, at: number) => (at + 4 <= b.length ? (b[at] | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 3] << 24)) >>> 0 : null);
+
+/**
+ * `SectionKnowledge.minimum`: the shortest copy the game takes. Read through this because
+ * editors before it (plugin-api 1.45) do not send it, and then every length is taken.
+ */
+export const minimumOf = (k: object | undefined | null): number => (k as { minimum?: number | null } | undefined)?.minimum ?? 0;

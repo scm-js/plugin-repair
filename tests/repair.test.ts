@@ -16,6 +16,18 @@ const bytes = (...v: number[]) => new Uint8Array(v);
 const JUNK = "\x00\x01\x02\x03";
 
 describe("applyRepairs", () => {
+  it("folds a decoy string table into the real one, not over it", () => {
+    // La Mancha 1.1: the real STR first, a 1-byte STR near the end. The game passes over a copy
+    // too short for its string count, so the fold keeps the real table.
+    const real = bytes(1, 0, 4, 0, 65, 0);
+    const known = KNOWN.map((k) => (k.name === "STR " ? { ...k, minimum: 2 } : k));
+    const file: ChunkFile = { chunks: [chunk("STR ", real), chunk("SPRP", bytes(1, 0, 0, 0)), chunk("STR ", bytes(0xa1))], trailing: null };
+    const out = applyRepairs(file, [{ kind: "collapse", name: "STR " }], { ...ctx, known });
+    const strs = out.file.chunks.filter((c) => c.name === "STR ");
+    expect(strs).toHaveLength(1);
+    expect(strs[0].data).toEqual(real);
+  });
+
   it("fixes lengths, resizes, trims and writes in place, by chunk identity", () => {
     const file: ChunkFile = {
       chunks: [
