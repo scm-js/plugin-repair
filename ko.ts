@@ -144,6 +144,7 @@ export const KO: Record<string, string> = {
   "Nothing else to repair.": "더 복구할 것이 없습니다.",
   "Repaired when the map opened ({n})": "맵을 열 때 복구함 ({n})",
   "Repaired ({n})": "복구함 ({n})",
+  "This map is open to view only, so nothing here can be repaired in it. File ▸ Edit a Copy opens a copy you can repair.": "이 맵은 보기 전용으로 열려 있어 여기서는 아무것도 복구할 수 없습니다. 파일 ▸ 사본 편집으로 복구할 수 있는 사본을 여세요.",
   "Undo": "되돌리기",
   "Advanced: every finding by section": "고급: 섹션별 모든 항목",
   "A repair rewrites the file and clears the undo history, as Section Explorer and Resize do. Edit ▸ Preferences ▸ Plugins ▸ Repair chooses what happens when a map opens.": "복구는 섹션 탐색기나 크기 조절처럼 파일을 다시 쓰고 실행 취소 기록을 지웁니다. 맵을 열 때 무엇을 할지는 편집 ▸ 환경 설정 ▸ 플러그인 ▸ 복구에서 고릅니다.",

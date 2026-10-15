@@ -13,7 +13,7 @@ const finding = (id: string, recommended: boolean, level: Finding["level"] = "wa
  * one in front. `mode` is the stored choice for a map opening; `findings` what every
  * check finds. The dialog is never drawn here, and a repair is recorded rather than run.
  */
-function editor(options: { mode?: string; findings?: Finding[]; modified?: boolean; shared?: boolean } = {}) {
+function editor(options: { mode?: string; findings?: Finding[]; modified?: boolean; shared?: boolean; viewOnly?: boolean } = {}) {
   const files = new Map<number, Uint8Array>();
   let front: number | null = null;
   const replaced: { id: number | null; bytes: Uint8Array }[] = [];
@@ -36,7 +36,7 @@ function editor(options: { mode?: string; findings?: Finding[]; modified?: boole
     document: {
       isOpen: () => front !== null,
       list: () => [...files.keys()].map((id) => ({ id, active: id === front })),
-      info: () => ({ modified: options.modified ?? false, fileName: null, name: "m" }),
+      info: () => ({ modified: options.modified ?? false, fileName: null, name: "m", viewOnly: options.viewOnly ?? false }),
       sections: {
         file: () => files.get(front!)!,
         replaceFile: (bytes: Uint8Array) => { replaced.push({ id: front, bytes }); return { warnings: [] }; },
@@ -64,6 +64,8 @@ function editor(options: { mode?: string; findings?: Finding[]; modified?: boole
     cell,
     dialogs,
     open(id: number, bytes: number[]) { files.set(id, new Uint8Array(bytes)); front = id; event({ reason: "open", fileName: `${id}.scx`, id }); },
+    /** File ▸ New, or File ▸ Edit a Copy: a map with no file behind it. */
+    create(id: number, bytes: number[]) { files.set(id, new Uint8Array(bytes)); front = id; event({ reason: "new", fileName: null, id }); },
     /** A repair happened: the file in front changed, and Repair knows it did. */
     repair(bytes: number[]) {
       files.set(front!, new Uint8Array(bytes));
@@ -140,6 +142,27 @@ describe("Repair when a map opens", () => {
       expect(ed.repairs).toEqual([]);
       expect(ed.cell).toEqual({ text: "Repair: 1 to fix", warn: true });
     }
+  });
+
+  it("on a view-only map repairs only the bytes, and still shows the rest in the status bar", async () => {
+    const isom: Finding = { ...finding("isom", true), repair: { kind: "rebuild-isom" } as Finding["repair"] };
+    const ed = editor({ mode: "auto", viewOnly: true, findings: [finding("bytes", true), isom] });
+    ed.open(1, [1]);
+    await settle();
+    expect(ed.repairs).toEqual([{ ids: ["bytes"], asOpened: true }]);
+    const only = editor({ mode: "auto", viewOnly: true, findings: [isom] });
+    only.open(1, [1]);
+    await settle();
+    expect(only.repairs).toEqual([]);
+    expect(only.cell).toEqual({ text: "Repair: 1 to fix", warn: true });
+  });
+
+  it("checks a copy made with Edit a Copy, which the editor opens as a new, changed map", async () => {
+    const ed = editor({ mode: "auto", modified: true, findings: [finding("safe", true), finding("call", false)] });
+    ed.create(2, [1]);
+    await settle();
+    expect(ed.repairs).toEqual([]);
+    expect(ed.cell).toEqual({ text: "Repair: 1 to fix · 1 to review", warn: true });
   });
 
   it("asks first when told to, and only about something worth asking", async () => {
