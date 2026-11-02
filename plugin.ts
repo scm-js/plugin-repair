@@ -1,5 +1,5 @@
 /**
- * Repair — a plugin for the scmJS map editor (https://github.com/jeany55/scm-js).
+ * Repair — a plugin for the scmJS map editor (https://github.com/scm-js/scm-js).
  *
  * When a map opens, the plugin reads the file the way the game does — every section,
  * its declared and real length, repeats, the values in the headers and tables — and
