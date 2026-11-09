@@ -280,6 +280,31 @@ describe("tables", () => {
     expect((f.repair as { bytes: Uint8Array }).bytes).toEqual(units.subarray(0, 36));
   });
 
+  it("takes the unit types from the data set in use: a mod's units are no finding", () => {
+    // Cosmonarchy's units.dat has 3,000 entries; a map made with it places unit 332.
+    const file = goodFile();
+    const units = new Uint8Array(36 * 2);
+    const v = new DataView(units.buffer);
+    v.setUint16(8, 332, true); units[10] = 0;
+    v.setUint16(36 + 8, 2999, true); units[36 + 10] = 1;
+    file.chunks[at(file, "UNIT")] = chunk("UNIT", units);
+    expect(ids(analyze(input(file, { unitTypes: 3000 })).findings)).not.toContain("units");
+    // With the game's own data (or none loaded) they are what the game cannot place, as before.
+    for (const unitTypes of [228, undefined]) {
+      const f = byId(analyze(input(file, { unitTypes })).findings, "units");
+      expect(f.title).toBe("2 of 2 unit records name a unit type or owner the game does not have");
+      expect(f.detail).toContain("past 227 (the last unit type of the data set in use)");
+    }
+    // Past the mod's own last type, still a finding, and the detail names that type.
+    v.setUint16(36 + 8, 3000, true);
+    const f = byId(analyze(input(file, { unitTypes: 3000 })).findings, "units");
+    expect(f.title).toBe("1 of 2 unit records name a unit type or owner the game does not have");
+    expect(f.detail).toContain("past 2,999");
+    expect((f.repair as { bytes: Uint8Array }).bytes).toEqual(units.subarray(0, 36));
+    // A data set reporting fewer types than the game's never narrows the check.
+    expect(byId(analyze(input(file, { unitTypes: 100 })).findings, "units").detail).toContain("past 227");
+  });
+
   it("notices a VCOD that is not StarEdit's, as an optional restore", () => {
     const file = goodFile();
     file.chunks[at(file, "VCOD")] = chunk("VCOD", new Uint8Array(1040).fill(9));

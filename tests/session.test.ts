@@ -126,6 +126,33 @@ describe("Repair with several maps open", () => {
   });
 });
 
+describe("Repair and the data set", () => {
+  it("counts the unit types of the data set in use, and none without game data", async () => {
+    const counted = (data: unknown) => (new Session({ data } as unknown as PluginApi) as unknown as { unitTypes: () => Promise<number | undefined> }).unitTypes();
+    expect(await counted({ load: async () => true, units: () => ({ flingy: new Uint8Array(3000) }) })).toBe(3000);
+    expect(await counted({ load: async () => false, units: () => null })).toBeUndefined();
+    expect(await counted({ load: async () => { throw new Error("no data"); }, units: () => null })).toBeUndefined();
+  });
+
+  it("checks the map in front again when the data set changes, and a waiting map when it comes back", async () => {
+    const options = { mode: "ask", findings: [finding("units", false)] };
+    const ed = editor(options);
+    ed.open(1, [1]);
+    await settle();
+    ed.open(2, [2]);
+    await settle();
+    expect(ed.cell).toEqual({ text: "Repair: 1 to review", warn: true });
+    // The mod is selected: its unit types cover the map's units.
+    options.findings = [];
+    ed.session.dataChanged();
+    await settle();
+    expect(ed.cell.text).toBeNull();
+    ed.switchTo(1);
+    await settle();
+    expect(ed.cell.text).toBeNull();
+  });
+});
+
 describe("Repair when a map opens", () => {
   it("repairs the safe findings as the file that was opened, and leaves the rest to the status bar", async () => {
     const ed = editor({ mode: "auto", findings: [finding("safe", true), finding("call", false), finding("note", false, "info")] });

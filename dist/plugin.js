@@ -144,7 +144,7 @@ function matching(text, open) {
 
 // analyze.ts
 var MAP_VERSIONS = /* @__PURE__ */ new Set([59, 63, 205, 206]);
-var MAX_UNIT_ID = 227;
+var GAME_UNIT_TYPES = 228;
 var UNIT_STRIDE = 36;
 var PLAYER_TYPE_INACTIVE = 0;
 var PLAYER_RACE_INACTIVE = 7;
@@ -425,12 +425,13 @@ function analyze(input) {
   const units = bytesOf("UNIT");
   if (units) {
     const records = Math.floor(units.length / UNIT_STRIDE);
+    const last = Math.max(input.unitTypes ?? GAME_UNIT_TYPES, GAME_UNIT_TYPES) - 1;
     const bad = [];
     for (let i = 0; i < records; i++) {
       const at = i * UNIT_STRIDE;
       const id = u16(units, at + 8);
       const owner = units[at + 10];
-      if (id > MAX_UNIT_ID || owner > 11) bad.push(i);
+      if (id > last || owner > 11) bad.push(i);
     }
     if (bad.length > 0) {
       const keep = new Uint8Array((records - bad.length) * UNIT_STRIDE);
@@ -446,7 +447,7 @@ function analyze(input) {
         level: "warn",
         section: "UNIT",
         title: t("{bad} of {records} unit records name a unit type or owner the game does not have", { bad: bad.length, records: fmt(records) }),
-        detail: t("A unit id past 227 or an owner past player 12 is nothing the game can place; it skips or misreads the record. Removing those records is the only clean repair, and it is data loss \u2014 look at them in the Units layer first."),
+        detail: t("A unit id past {last} (the last unit type of the data set in use) or an owner past player 12 is nothing the game can place; it skips or misreads the record. Removing those records is the only clean repair, and it is data loss \u2014 look at them in the Units layer first.", { last: fmt(last) }),
         repair: { kind: "write", index: lastIndex(file, "UNIT"), bytes: keep },
         recommended: false
       });
@@ -858,7 +859,7 @@ var KO = {
   "1.16.1 started every line in the default colour; Remastered carries the previous line's colour across the break, so {lines, plural, one {# line here is} other {# lines here are}} drawn in a colour the map never set{carried} \u2014 for example {example}. Writing the reset the old game supplied at the head of each of those lines makes both games draw the string alike, and changes nothing about what it says. Whether that is a repair depends on when the map was made: one written for Remastered may mean the colours it shows, so this is never ticked for you.": "1.16.1\uC740 \uBAA8\uB4E0 \uC904\uC744 \uAE30\uBCF8 \uC0C9\uC73C\uB85C \uC2DC\uC791\uD588\uC9C0\uB9CC, \uB9AC\uB9C8\uC2A4\uD130\uB294 \uC55E \uC904\uC758 \uC0C9\uC744 \uC904\uBC14\uAFC8 \uB108\uBA38\uB85C \uC774\uC5B4 \uAC11\uB2C8\uB2E4. \uADF8\uB798\uC11C \uC5EC\uAE30 \uC788\uB294 {lines}\uC904\uC740 \uB9F5\uC774 \uC815\uD55C \uC801 \uC5C6\uB294 \uC0C9\uC73C\uB85C \uADF8\uB824\uC9D1\uB2C8\uB2E4{carried}. \uC608: {example}. \uC61B \uAC8C\uC784\uC774 \uB123\uC5B4 \uC8FC\uB358 \uCD08\uAE30\uD654 \uCF54\uB4DC\uB97C \uADF8 \uC904\uB4E4\uC758 \uC55E\uC5D0 \uC368 \uB123\uC73C\uBA74 \uB450 \uAC8C\uC784\uC774 \uBB38\uC790\uC5F4\uC744 \uB611\uAC19\uC774 \uADF8\uB9AC\uBA70, \uB0B4\uC6A9\uC740 \uC870\uAE08\uB3C4 \uBC14\uB00C\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. \uC774\uAC83\uC774 \uBCF5\uAD6C\uC778\uC9C0\uB294 \uB9F5\uC774 \uC5B8\uC81C \uB9CC\uB4E4\uC5B4\uC84C\uB294\uC9C0\uC5D0 \uB2EC\uB824 \uC788\uC2B5\uB2C8\uB2E4. \uB9AC\uB9C8\uC2A4\uD130\uC6A9\uC73C\uB85C \uB9CC\uB4E0 \uB9F5\uC774\uB77C\uBA74 \uC9C0\uAE08 \uBCF4\uC774\uB294 \uC0C9\uC774 \uC758\uB3C4\uD55C \uAC83\uC77C \uC218 \uC788\uC73C\uBBC0\uB85C, \uC774 \uD56D\uBAA9\uC740 \uC808\uB300 \uC790\uB3D9\uC73C\uB85C \uCCB4\uD06C\uB418\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.",
   "A negative length makes the game seek backwards and read earlier bytes again; the editor stops reading here and keeps the rest of the file as-is. Removing the header leaves what came before it.": "\uAE38\uC774\uAC00 \uC74C\uC218\uC774\uBA74 \uAC8C\uC784\uC740 \uB4A4\uB85C \uB3CC\uC544\uAC00 \uC55E\uC758 \uBC14\uC774\uD2B8\uB97C \uB2E4\uC2DC \uC77D\uC2B5\uB2C8\uB2E4. \uC5D0\uB514\uD130\uB294 \uC5EC\uAE30\uC11C \uC77D\uAE30\uB97C \uBA48\uCD94\uACE0 \uD30C\uC77C\uC758 \uB098\uBA38\uC9C0\uB97C \uADF8\uB300\uB85C \uB461\uB2C8\uB2E4. \uC774 \uD5E4\uB354\uB97C \uC9C0\uC6B0\uBA74 \uADF8 \uC55E\uC758 \uB0B4\uC6A9\uB9CC \uB0A8\uC2B5\uB2C8\uB2E4.",
   "A section named {name} ({size} bytes)": "\uC774\uB984\uC774 {name}\uC778 \uC139\uC158 ({size}\uBC14\uC774\uD2B8)",
-  "A unit id past 227 or an owner past player 12 is nothing the game can place; it skips or misreads the record. Removing those records is the only clean repair, and it is data loss \u2014 look at them in the Units layer first.": "\uC720\uB2DB \uBC88\uD638\uAC00 227\uC744 \uB118\uAC70\uB098 \uC18C\uC720\uC790\uAC00 \uD50C\uB808\uC774\uC5B4 12\uB97C \uB118\uC73C\uBA74 \uAC8C\uC784\uC774 \uBC30\uCE58\uD560 \uC218 \uC5C6\uC5B4, \uADF8 \uB808\uCF54\uB4DC\uB97C \uAC74\uB108\uB6F0\uAC70\uB098 \uC798\uBABB \uC77D\uC2B5\uB2C8\uB2E4. \uADF8 \uB808\uCF54\uB4DC\uB97C \uC9C0\uC6B0\uB294 \uAC83\uC774 \uC720\uC77C\uD558\uAC8C \uAE54\uB054\uD55C \uBCF5\uAD6C\uC774\uC9C0\uB9CC \uB370\uC774\uD130\uAC00 \uC0AC\uB77C\uC9C0\uBBC0\uB85C, \uBA3C\uC800 \uC720\uB2DB \uB808\uC774\uC5B4\uC5D0\uC11C \uC0B4\uD3B4\uBCF4\uC138\uC694.",
+  "A unit id past {last} (the last unit type of the data set in use) or an owner past player 12 is nothing the game can place; it skips or misreads the record. Removing those records is the only clean repair, and it is data loss \u2014 look at them in the Units layer first.": "\uC720\uB2DB \uBC88\uD638\uAC00 {last}(\uC0AC\uC6A9 \uC911\uC778 \uB370\uC774\uD130 \uC138\uD2B8\uC758 \uB9C8\uC9C0\uB9C9 \uC720\uB2DB \uC885\uB958)\uBCF4\uB2E4 \uD06C\uAC70\uB098 \uC18C\uC720\uC790\uAC00 \uD50C\uB808\uC774\uC5B4 12\uB97C \uB118\uC73C\uBA74 \uAC8C\uC784\uC774 \uBC30\uCE58\uD560 \uC218 \uC5C6\uC5B4, \uADF8 \uB808\uCF54\uB4DC\uB97C \uAC74\uB108\uB6F0\uAC70\uB098 \uC798\uBABB \uC77D\uC2B5\uB2C8\uB2E4. \uADF8 \uB808\uCF54\uB4DC\uB97C \uC9C0\uC6B0\uB294 \uAC83\uC774 \uC720\uC77C\uD558\uAC8C \uAE54\uB054\uD55C \uBCF5\uAD6C\uC774\uC9C0\uB9CC \uB370\uC774\uD130\uAC00 \uC0AC\uB77C\uC9C0\uBBC0\uB85C, \uBA3C\uC800 \uC720\uB2DB \uB808\uC774\uC5B4\uC5D0\uC11C \uC0B4\uD3B4\uBCF4\uC138\uC694.",
   "About {share}% of the map is terrain no diamond lattice describes": "\uB9F5\uC758 \uC57D {share}%\uB294 \uC5B4\uB5A4 \uB9C8\uB984\uBAA8 \uACA9\uC790\uB85C\uB3C4 \uB098\uD0C0\uB0BC \uC218 \uC5C6\uB294 \uC9C0\uD615\uC785\uB2C8\uB2E4",
   "An unknown section {name} ({size} bytes)": "\uC54C \uC218 \uC5C6\uB294 \uC139\uC158 {name} ({size}\uBC14\uC774\uD2B8)",
   "Checking the map\u2026": "\uB9F5 \uAC80\uC0AC \uC911\u2026",
@@ -1024,6 +1025,9 @@ function activate(api) {
   api.events.on("language", () => {
     void session.relabel();
   });
+  api.events.on("gameData", () => {
+    session.dataChanged();
+  });
   registerPreferencesPage(api);
   return () => session.dispose();
 }
@@ -1104,6 +1108,8 @@ var Session = class {
   /** The map the fields above are about; the other open maps' copies wait in `parked`. */
   front = null;
   parked = /* @__PURE__ */ new Map();
+  /** Parked maps whose findings were made with another data set. */
+  stale = /* @__PURE__ */ new Set();
   busy = false;
   /** Bumped on every open / close / switch so a check still gathering for the previous map throws its result away. */
   generation = 0;
@@ -1112,6 +1118,14 @@ var Session = class {
     this.api = api;
   }
   t = (text, params) => this.api.i18n.t(text, params);
+  /**
+   * The data set changed, and with it how many unit types a map's units may name. The map in
+   * front is read again now; the others when they come back to the front.
+   */
+  dataChanged() {
+    for (const id of this.parked.keys()) this.stale.add(id);
+    void this.relabel();
+  }
   /** The language changed: the findings are written in it, so read the map again and draw anew. */
   async relabel() {
     if (this.busy || !this.analysis || !this.api.document.isOpen()) return;
@@ -1131,13 +1145,19 @@ var Session = class {
     if (this.front !== null && this.front !== e.id && open.has(this.front)) {
       this.parked.set(this.front, { original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted });
     }
-    for (const id of this.parked.keys()) if (!open.has(id)) this.parked.delete(id);
+    for (const id of this.parked.keys()) if (!open.has(id)) {
+      this.parked.delete(id);
+      this.stale.delete(id);
+    }
     this.front = e.id;
     const back = e.id === null ? void 0 : this.parked.get(e.id);
     if (e.id !== null) this.parked.delete(e.id);
     if (e.reason === "switch" && back) {
       ({ original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted } = back);
       this.updateCell();
+      if (this.stale.delete(e.id)) setTimeout(() => {
+        void this.relabel();
+      }, 0);
       return;
     }
     this.original = null;
@@ -1225,7 +1245,16 @@ var Session = class {
     } catch {
       isom = "unchecked";
     }
-    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage(), t: this.t });
+    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage(), t: this.t, unitTypes: await this.unitTypes() });
+  }
+  /** How many unit types the data set in use has; undefined (the game's 228) when no game data is loaded. */
+  async unitTypes() {
+    try {
+      if (!await this.api.data.load()) return void 0;
+    } catch {
+      return void 0;
+    }
+    return this.api.data.units()?.flingy.length;
   }
   /* ── The status bar cell ────────────────────────────────── */
   updateCell() {

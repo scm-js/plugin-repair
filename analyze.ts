@@ -86,6 +86,11 @@ export interface AnalysisInput {
   usage?: Map<number, { kind: string }[]>;
   /** What the titles and details are written through: `api.i18n.t` in the editor, English without it. */
   t?: Translate;
+  /**
+   * How many unit types the data set in use has (`api.data.units()`'s length): 228 for the
+   * game's own, thousands for a mod like Cosmonarchy. Absent, or with no data loaded, the game's.
+   */
+  unitTypes?: number;
 }
 
 export interface Analysis {
@@ -94,7 +99,8 @@ export interface Analysis {
 }
 
 const MAP_VERSIONS = new Set([59, 63, 205, 206]);
-const MAX_UNIT_ID = 227;
+/** The game's own unit types, 0–227; a data set can have more (`AnalysisInput.unitTypes`). */
+const GAME_UNIT_TYPES = 228;
 const UNIT_STRIDE = 36;
 const PLAYER_TYPE_INACTIVE = 0;
 const PLAYER_RACE_INACTIVE = 7;
@@ -351,12 +357,13 @@ export function analyze(input: AnalysisInput): Analysis {
   const units = bytesOf("UNIT");
   if (units) {
     const records = Math.floor(units.length / UNIT_STRIDE);
+    const last = Math.max(input.unitTypes ?? GAME_UNIT_TYPES, GAME_UNIT_TYPES) - 1;
     const bad: number[] = [];
     for (let i = 0; i < records; i++) {
       const at = i * UNIT_STRIDE;
       const id = u16(units, at + 8)!;
       const owner = units[at + 10];
-      if (id > MAX_UNIT_ID || owner > 11) bad.push(i);
+      if (id > last || owner > 11) bad.push(i);
     }
     if (bad.length > 0) {
       const keep = new Uint8Array((records - bad.length) * UNIT_STRIDE);
@@ -370,7 +377,7 @@ export function analyze(input: AnalysisInput): Analysis {
       add({
         id: "units", level: "warn", section: "UNIT",
         title: t("{bad} of {records} unit records name a unit type or owner the game does not have", { bad: bad.length, records: fmt(records) }),
-        detail: t("A unit id past 227 or an owner past player 12 is nothing the game can place; it skips or misreads the record. Removing those records is the only clean repair, and it is data loss — look at them in the Units layer first."),
+        detail: t("A unit id past {last} (the last unit type of the data set in use) or an owner past player 12 is nothing the game can place; it skips or misreads the record. Removing those records is the only clean repair, and it is data loss — look at them in the Units layer first.", { last: fmt(last) }),
         repair: { kind: "write", index: lastIndex(file, "UNIT"), bytes: keep }, recommended: false,
       });
     }
