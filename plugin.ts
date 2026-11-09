@@ -39,6 +39,8 @@ export default function activate(api: PluginApi) {
   api.menu.add("Tools", { label: msg("Repair Map…"), after: "Check Map…", enabled: () => api.document.isOpen(), command: "check" });
   api.events.on("document", (e) => session.onDocument(e));
   api.events.on("language", () => { void session.relabel(); });
+  // Another data set has other unit types: a map's units past the game's 227 may be the mod's own.
+  api.events.on("gameData", () => { session.dataChanged(); });
   registerPreferencesPage(api);
   return () => session.dispose();
 }
@@ -134,6 +136,8 @@ export class Session {
   /** The map the fields above are about; the other open maps' copies wait in `parked`. */
   private front: number | null = null;
   private parked = new Map<number, Parked>();
+  /** Parked maps whose findings were made with another data set. */
+  private stale = new Set<number>();
   private busy = false;
   /** Bumped on every open / close / switch so a check still gathering for the previous map throws its result away. */
   private generation = 0;
@@ -143,6 +147,15 @@ export class Session {
   constructor(api: PluginApi) { this.api = api; }
 
   private t = (text: string, params?: Record<string, string | number>) => this.api.i18n.t(text, params);
+
+  /**
+   * The data set changed, and with it how many unit types a map's units may name. The map in
+   * front is read again now; the others when they come back to the front.
+   */
+  dataChanged() {
+    for (const id of this.parked.keys()) this.stale.add(id);
+    void this.relabel();
+  }
 
   /** The language changed: the findings are written in it, so read the map again and draw anew. */
   async relabel() {
@@ -167,13 +180,15 @@ export class Session {
     if (this.front !== null && this.front !== e.id && open.has(this.front)) {
       this.parked.set(this.front, { original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted });
     }
-    for (const id of this.parked.keys()) if (!open.has(id)) this.parked.delete(id);
+    for (const id of this.parked.keys()) if (!open.has(id)) { this.parked.delete(id); this.stale.delete(id); }
     this.front = e.id;
     const back = e.id === null ? undefined : this.parked.get(e.id);
     if (e.id !== null) this.parked.delete(e.id);
     if (e.reason === "switch" && back) {
       ({ original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted } = back);
       this.updateCell();
+      // Read with another data set while it waited: read it again once the editor has it in front.
+      if (this.stale.delete(e.id!)) setTimeout(() => { void this.relabel(); }, 0);
       return;
     }
     this.original = null;
@@ -269,7 +284,17 @@ export class Session {
     } catch {
       isom = "unchecked";
     }
-    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage(), t: this.t });
+    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage(), t: this.t, unitTypes: await this.unitTypes() });
+  }
+
+  /** How many unit types the data set in use has; undefined (the game's 228) when no game data is loaded. */
+  private async unitTypes(): Promise<number | undefined> {
+    try {
+      if (!(await this.api.data.load())) return undefined;
+    } catch {
+      return undefined;
+    }
+    return this.api.data.units()?.flingy.length;
   }
 
   /* ── The status bar cell ────────────────────────────────── */

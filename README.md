@@ -100,7 +100,9 @@ A map open to view only (a replay's map, in Aftermath) gets only the byte-level 
   those slots inactive.
 - String offsets pointing outside STR or STRx. The game shows these strings as empty. Repair:
   rewrite the string table with every string that could be read.
-- Units with a type past 227 or an owner past player 12. Repair (your decision): remove them.
+- Units with a type past the last one the data set in use has (227 with the game's own data; a
+  mod's can have thousands) or an owner past player 12. Repair (your decision): remove them.
+  Switching to another data set checks the map again.
 - A VCOD that is not StarEdit's standard table. Repair (your decision): restore it.
 
 ### What the editor needs
