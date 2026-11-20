@@ -46,7 +46,13 @@ export type Repair =
    * replace the whole file. Neither carries the text: the strings are read again at apply
    * time, since the byte-level repairs run first and may have moved them.
    */
-  | { kind: "set-strings"; change: "colours" | "stacks" };
+  | { kind: "set-strings"; change: "colours" | "stacks" }
+  /**
+   * Leave the archive's members that nothing names out of the next save
+   * (`api.document.archive.dropUnreachable`): not the scenario's bytes but the archive
+   * around it, so the host does it, after the other repairs — a mended STR may name one.
+   */
+  | { kind: "drop-unreachable" };
 
 export interface Finding {
   /** Stable across re-analyses of the same problem, so ticks survive a refresh. */
@@ -78,6 +84,11 @@ export interface AnalysisInput {
   vcod?: Uint8Array | null;
   /** The ISOM's state, or `"unchecked"` when the tileset graphics are not there to measure it. */
   isom: IsomFacts | "unchecked";
+  /**
+   * `api.document.archive.unreachable()`: the archive's members no name reaches. Absent (an
+   * editor without it, a bare .chk) skips the one check about the archive rather than the scenario.
+   */
+  archive?: { count: number; size: number } | null;
   /** `api.query.strings()`. Absent skips the two content checks, the only ones about what the map shows. */
   strings?: (string | null)[];
   /** `api.text`'s colour and stacking readers. Absent skips the checks with `strings`. */
@@ -540,6 +551,18 @@ export function analyze(input: AnalysisInput): Analysis {
       title: t("The sections are not in StarEdit's order"),
       detail: t("The game reads them in any order. Putting them in the order StarEdit writes them makes the file look like one it saved; unknown sections go to the end."),
       repair: { kind: "reorder" }, recommended: false,
+    });
+  }
+
+  /* ── The archive ───────────────────────────────────────── */
+
+  if (input.archive && input.archive.count > 0) {
+    const { count, size } = input.archive;
+    add({
+      id: "archive:unreachable", level: "info", section: null,
+      title: t("{n, plural, one {# file} other {# files}} in the archive that nothing names ({size} bytes)", { n: count, size: fmt(size) }),
+      detail: t("The game opens a file in the map's archive only by a name the scenario gives, so it never opens these. Protectors put them there, often to fill the archive's index so that an editor has no room to add a file. Leaving them out makes the next save write the archive afresh, with room for the editor's own files; the map plays the same."),
+      repair: { kind: "drop-unreachable" }, recommended: true,
     });
   }
 

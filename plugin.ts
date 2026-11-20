@@ -30,7 +30,17 @@ import { msg } from "./i18n";
 import { KO } from "./ko";
 
 /** Repairs made through the editor's model rather than the file's bytes; a view-only map refuses them. */
-const HOST_REPAIRS: ReadonlySet<string> = new Set(["rebuild", "rebuild-isom", "set-strings"]);
+const HOST_REPAIRS: ReadonlySet<string> = new Set(["rebuild", "rebuild-isom", "set-strings", "drop-unreachable"]);
+
+/**
+ * `api.document.archive`, read where the editor has it: added to the API after the version
+ * this plugin was first built against, so an older editor answers undefined and the check is skipped.
+ */
+interface ArchiveMembers {
+  unreachable(): { count: number; size: number };
+  dropUnreachable(options?: { asOpened?: boolean }): { count: number; undo(): void };
+}
+const archiveOf = (api: PluginApi): ArchiveMembers | null => (api.document as { archive?: ArchiveMembers }).archive ?? null;
 
 export default function activate(api: PluginApi) {
   api.i18n.register({ ko: KO });
@@ -118,6 +128,7 @@ interface Parked {
   auto: number;
   log: string[];
   attempted: Set<string>;
+  undoArchive: (() => void) | null;
 }
 
 export class Session {
@@ -133,6 +144,8 @@ export class Session {
   /** How many of `done` were made by themselves as the map opened — the first ones. */
   private auto = 0;
   private log: string[] = [];
+  /** Puts back the archive members a `drop-unreachable` left out; null when none were. */
+  private undoArchive: (() => void) | null = null;
   /** The map the fields above are about; the other open maps' copies wait in `parked`. */
   private front: number | null = null;
   private parked = new Map<number, Parked>();
@@ -178,14 +191,14 @@ export class Session {
     // and the status cell are still there when it comes back; a map that closed takes its copy with it.
     const open = new Set(this.api.document.list().map((d) => d.id));
     if (this.front !== null && this.front !== e.id && open.has(this.front)) {
-      this.parked.set(this.front, { original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted });
+      this.parked.set(this.front, { original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted, undoArchive: this.undoArchive });
     }
     for (const id of this.parked.keys()) if (!open.has(id)) { this.parked.delete(id); this.stale.delete(id); }
     this.front = e.id;
     const back = e.id === null ? undefined : this.parked.get(e.id);
     if (e.id !== null) this.parked.delete(e.id);
     if (e.reason === "switch" && back) {
-      ({ original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted } = back);
+      ({ original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted, undoArchive: this.undoArchive } = back);
       this.updateCell();
       // Read with another data set while it waited: read it again once the editor has it in front.
       if (this.stale.delete(e.id!)) setTimeout(() => { void this.relabel(); }, 0);
@@ -197,6 +210,7 @@ export class Session {
     this.auto = 0;
     this.log = [];
     this.attempted = new Set();
+    this.undoArchive = null;
     this.updateCell();
     // A new map is checked as well: File ▸ Edit a Copy opens one, from a map that may still
     // carry what the on-open pass could not repair (all but the bytes, on a view-only map).
@@ -284,7 +298,7 @@ export class Session {
     } catch {
       isom = "unchecked";
     }
-    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage(), t: this.t, unitTypes: await this.unitTypes() });
+    return analyze({ file, known, required, vcod, isom, archive: archiveOf(this.api)?.unreachable() ?? null, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage(), t: this.t, unitTypes: await this.unitTypes() });
   }
 
   /** How many unit types the data set in use has; undefined (the game's 228) when no game data is loaded. */
@@ -512,6 +526,16 @@ export class Session {
       // The rebuild and the ISOM went through the editor's model, which marks the map
       // modified; on open they are as much the reading of the file as the bytes above.
       if (asOpened && (outcome.rebuild.length > 0 || outcome.rebuildIsom)) sections.replaceFile(sections.file(), { asOpened: true });
+      // Last, so a name the repairs above brought back (a mended STR) keeps its file.
+      const archive = archiveOf(api);
+      if (outcome.dropUnreachable && archive) {
+        const { count, undo } = archive.dropUnreachable({ asOpened });
+        if (count > 0) {
+          const before = this.undoArchive;
+          this.undoArchive = () => { undo(); before?.(); };
+        }
+        done.push(t("{n, plural, one {# archive file} other {# archive files}} nothing names left out of the next save", { n: count }));
+      }
       for (const s of outcome.skipped) done.push(t("skipped: {why}", { why: s }));
       if (!asOpened) api.ui.status(t("Repair: {done}.", { done: done.join("; ") }));
       this.log = [t("Done: {done}.", { done: done.join("; ") })];
@@ -548,6 +572,8 @@ export class Session {
     try {
       // Marked modified, as any edit: whether the file on disk is still the original (it
       // is not after a Save) is not something the plugin can tell.
+      this.undoArchive?.();
+      this.undoArchive = null;
       api.document.sections.replaceFile(this.original.bytes);
       this.done = [];
       this.auto = 0;
