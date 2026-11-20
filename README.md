@@ -134,10 +134,18 @@ Both are left to you.
   what the first one would read once flattened. The repair removes the codes and joins the
   pieces left to right. Colours and words stay; where each piece sat is lost.
 
+### The archive
+
+- Files in the archive that nothing names. The game opens a file in a map's archive only by
+  a name the scenario gives, such as a sound's path, so it never opens these. Protectors add
+  them, often to fill the archive's index so that an editor has no room to add a file of
+  its own. Repair: leave them out of the next save, which then writes the archive afresh.
+  The map plays the same. Needs an editor released after 0.17.0; an older one does not report them.
+
 ### What it does not do
 
-Nothing at the archive level. A `.scx` whose MPQ is damaged fails before the editor has a
-file to give the plugin.
+A `.scx` whose MPQ is damaged fails before the editor has a file to give the plugin, so
+the plugin cannot repair the archive itself.
 
 ## Development
 

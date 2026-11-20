@@ -505,3 +505,19 @@ describe("stacked text", () => {
     expect(ids(a.findings)).toContain("strings-stacked");
   });
 });
+
+describe("the archive around the scenario", () => {
+  it("offers to leave out the files nothing names, as a repair made by itself", () => {
+    const { findings } = analyze(input(goodFile(), { archive: { count: 3, size: 4096 } }));
+    const f = byId(findings, "archive:unreachable");
+    expect(f.title).toBe("3 files in the archive that nothing names (4,096 bytes)");
+    expect(f.repair).toEqual({ kind: "drop-unreachable" });
+    expect(f.recommended).toBe(true);
+  });
+
+  it("says nothing when every file has a name, or the editor cannot tell", () => {
+    for (const archive of [{ count: 0, size: 0 }, null, undefined]) {
+      expect(ids(analyze(input(goodFile(), { archive })).findings)).not.toContain("archive:unreachable");
+    }
+  });
+});

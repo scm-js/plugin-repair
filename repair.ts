@@ -27,6 +27,8 @@ export interface RepairOutcome {
   rebuildIsom: boolean;
   /** The `set-strings` changes chosen, which the host runs through `document.update` after the file is written. */
   setStrings: ("colours" | "stacks")[];
+  /** `drop-unreachable` was chosen: the host leaves those archive members out, last. */
+  dropUnreachable: boolean;
 }
 
 export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairContext): RepairOutcome {
@@ -38,6 +40,7 @@ export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairCon
   const rebuild = new Set<string>();
   let rebuildIsom = false;
   const setStrings = new Set<"colours" | "stacks">();
+  let dropUnreachable = false;
   const spec = (name: string) => ctx.known.find((k) => k.name === name);
   const order = ctx.known.map((k) => k.name);
 
@@ -125,6 +128,10 @@ export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairCon
       case "set-strings":
         setStrings.add(r.change);
         break;
+      // The archive, not the scenario: the host does it once everything above is in.
+      case "drop-unreachable":
+        dropUnreachable = true;
+        break;
     }
   });
 
@@ -143,7 +150,7 @@ export function applyRepairs(input: ChunkFile, repairs: Repair[], ctx: RepairCon
     const rank = (c: Chunk) => { const i = readableName(c.name) ? order.indexOf(c.name) : -1; return i < 0 ? order.length : i; };
     file.chunks = file.chunks.map((c, i) => ({ c, i })).sort((a, b) => rank(a.c) - rank(b.c) || a.i - b.i).map(({ c }) => c);
   }
-  return { file, skipped, rebuild: [...rebuild], rebuildIsom, setStrings: [...setStrings] };
+  return { file, skipped, rebuild: [...rebuild], rebuildIsom, setStrings: [...setStrings], dropUnreachable };
 }
 
 /** Pad or cut to a size. */

@@ -158,4 +158,7 @@ export const KO: Record<string, string> = {
   "{n} to review": "검토할 것 {n}개",
   "Repair: {parts}": "복구: {parts}",
   "{n} more repaired since.": "그 뒤로 {n}개를 더 복구했습니다.",
+  "{n, plural, one {# file} other {# files}} in the archive that nothing names ({size} bytes)": "아카이브에서 아무것도 이름으로 가리키지 않는 파일 {n}개 ({size}바이트)",
+  "The game opens a file in the map's archive only by a name the scenario gives, so it never opens these. Protectors put them there, often to fill the archive's index so that an editor has no room to add a file. Leaving them out makes the next save write the archive afresh, with room for the editor's own files; the map plays the same.": "게임은 맵 아카이브의 파일을 시나리오가 주는 이름으로만 열기 때문에 이 파일들은 절대 열지 않습니다. 프로텍터가 넣어 둔 것으로, 에디터가 파일을 추가할 자리가 없도록 아카이브의 색인을 채우는 경우가 많습니다. 이 파일들을 빼면 다음 저장 때 아카이브를 새로 써서 에디터의 파일을 넣을 자리가 생깁니다. 맵은 똑같이 플레이됩니다.",
+  "{n, plural, one {# archive file} other {# archive files}} nothing names left out of the next save": "아무것도 이름으로 가리키지 않는 아카이브 파일 {n}개를 다음 저장에서 뺌",
 };

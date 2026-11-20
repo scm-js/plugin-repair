@@ -191,3 +191,13 @@ describe("applyRepairs", () => {
     expect(file.chunks.find((c) => c.name === "TILE")!.data).toEqual(new Uint8Array(16).fill(1));
   });
 });
+
+describe("leaving out the archive's unnamed files", () => {
+  it("is left to the host and does not touch the scenario's bytes", () => {
+    const file: ChunkFile = { chunks: [chunk("VER ", bytes(205, 0))], trailing: null };
+    const out = applyRepairs(file, [{ kind: "drop-unreachable" }], ctx);
+    expect(out.dropUnreachable).toBe(true);
+    expect(serializeChunks(out.file)).toEqual(serializeChunks(file));
+    expect(applyRepairs(file, [], ctx).dropUnreachable).toBe(false);
+  });
+});

@@ -222,3 +222,59 @@ describe("Repair when a map opens", () => {
     expect(ed.cell.text).toBeNull();
   });
 });
+
+describe("Repair and the archive", () => {
+  /** An editor with `document.archive`: `count` members nothing names, until they are dropped. */
+  function withArchive(count: number) {
+    const calls: { asOpened: boolean | undefined }[] = [];
+    let left = count, undone = 0;
+    const replaced: Uint8Array[] = [];
+    const api = {
+      i18n: { t: english },
+      storage: { get: (_key: string, fallback: unknown) => fallback },
+      sync: { current: () => null },
+      ui: { status: () => {}, statusItem: () => ({ set: () => {}, remove: () => {}, isShown: () => true }) },
+      document: {
+        isOpen: () => true,
+        list: () => [{ id: 1, active: true }],
+        info: () => ({ modified: false, fileName: "1.scx", name: "m", viewOnly: false }),
+        sections: { file: () => new Uint8Array(0), known: () => [], defaults: () => null, replaceFile: (bytes: Uint8Array) => { replaced.push(bytes); return { warnings: [] }; } },
+        archive: {
+          unreachable: () => ({ count: left, size: left * 4 }),
+          dropUnreachable: (options?: { asOpened?: boolean }) => {
+            calls.push({ asOpened: options?.asOpened });
+            const n = left;
+            left = 0;
+            return { count: n, undo: () => { left = n; undone++; } };
+          },
+        },
+      },
+    } as unknown as PluginApi;
+    const session = new Session(api);
+    const internals = session as unknown as { gather: () => Promise<Analysis>; repair: (chosen: Finding[], asOpened: boolean) => Promise<void>; restore: () => Promise<void>; done: Finding[] };
+    const drop: Finding = { id: "archive:unreachable", level: "info", section: null, title: "", detail: "", repair: { kind: "drop-unreachable" }, recommended: true };
+    internals.gather = async () => ({ counts: { error: 0, warn: 0, info: left > 0 ? 1 : 0 }, findings: left > 0 ? [drop] : [] });
+    session.onDocument({ reason: "open", fileName: "1.scx", id: 1 });
+    return { internals, drop, calls, replaced, left: () => left, undone: () => undone };
+  }
+
+  it("leaves the files out through the editor, as the file that was opened, and counts it repaired", async () => {
+    const ed = withArchive(2);
+    await ed.internals.repair([ed.drop], true);
+    expect(ed.calls).toEqual([{ asOpened: true }]);
+    expect(ed.left()).toBe(0);
+    expect(ed.internals.done.map((f) => f.id)).toEqual(["archive:unreachable"]);
+    // Nothing about the scenario changed, so its bytes were not written again.
+    expect(ed.replaced).toEqual([]);
+  });
+
+  it("puts them back with Undo, together with the file", async () => {
+    const ed = withArchive(2);
+    await ed.internals.repair([ed.drop], false);
+    expect(ed.calls).toEqual([{ asOpened: false }]);
+    await ed.internals.restore();
+    expect(ed.undone()).toBe(1);
+    expect(ed.left()).toBe(2);
+    expect(ed.replaced).toHaveLength(1);
+  });
+});

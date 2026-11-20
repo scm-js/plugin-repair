@@ -604,6 +604,18 @@ function analyze(input) {
       recommended: false
     });
   }
+  if (input.archive && input.archive.count > 0) {
+    const { count, size } = input.archive;
+    add({
+      id: "archive:unreachable",
+      level: "info",
+      section: null,
+      title: t("{n, plural, one {# file} other {# files}} in the archive that nothing names ({size} bytes)", { n: count, size: fmt(size) }),
+      detail: t("The game opens a file in the map's archive only by a name the scenario gives, so it never opens these. Protectors put them there, often to fill the archive's index so that an editor has no room to add a file. Leaving them out makes the next save write the archive afresh, with room for the editor's own files; the map plays the same."),
+      repair: { kind: "drop-unreachable" },
+      recommended: true
+    });
+  }
   const weight = { error: 0, warn: 1, info: 2 };
   findings.sort((a, b) => weight[a.level] - weight[b.level]);
   const counts = { error: 0, warn: 0, info: 0 };
@@ -685,6 +697,7 @@ function applyRepairs(input, repairs, ctx) {
   const rebuild = /* @__PURE__ */ new Set();
   let rebuildIsom = false;
   const setStrings = /* @__PURE__ */ new Set();
+  let dropUnreachable = false;
   const spec = (name) => ctx.known.find((k) => k.name === name);
   const order = ctx.known.map((k) => k.name);
   const targets = repairs.map((r) => "index" in r ? at(r.index) : null);
@@ -796,6 +809,10 @@ function applyRepairs(input, repairs, ctx) {
       case "set-strings":
         setStrings.add(r.change);
         break;
+      // The archive, not the scenario: the host does it once everything above is in.
+      case "drop-unreachable":
+        dropUnreachable = true;
+        break;
     }
   });
   file.chunks = chunks.filter((c) => !removals.has(c));
@@ -818,7 +835,7 @@ function applyRepairs(input, repairs, ctx) {
     };
     file.chunks = file.chunks.map((c, i) => ({ c, i })).sort((a, b) => rank(a.c) - rank(b.c) || a.i - b.i).map(({ c }) => c);
   }
-  return { file, skipped, rebuild: [...rebuild], rebuildIsom, setStrings: [...setStrings] };
+  return { file, skipped, rebuild: [...rebuild], rebuildIsom, setStrings: [...setStrings], dropUnreachable };
 }
 function fit(data, size, fill) {
   const out = new Uint8Array(size).fill(fill);
@@ -1009,11 +1026,15 @@ var KO = {
   "{n} to fix": "\uBCF5\uAD6C\uD560 \uAC83 {n}\uAC1C",
   "{n} to review": "\uAC80\uD1A0\uD560 \uAC83 {n}\uAC1C",
   "Repair: {parts}": "\uBCF5\uAD6C: {parts}",
-  "{n} more repaired since.": "\uADF8 \uB4A4\uB85C {n}\uAC1C\uB97C \uB354 \uBCF5\uAD6C\uD588\uC2B5\uB2C8\uB2E4."
+  "{n} more repaired since.": "\uADF8 \uB4A4\uB85C {n}\uAC1C\uB97C \uB354 \uBCF5\uAD6C\uD588\uC2B5\uB2C8\uB2E4.",
+  "{n, plural, one {# file} other {# files}} in the archive that nothing names ({size} bytes)": "\uC544\uCE74\uC774\uBE0C\uC5D0\uC11C \uC544\uBB34\uAC83\uB3C4 \uC774\uB984\uC73C\uB85C \uAC00\uB9AC\uD0A4\uC9C0 \uC54A\uB294 \uD30C\uC77C {n}\uAC1C ({size}\uBC14\uC774\uD2B8)",
+  "The game opens a file in the map's archive only by a name the scenario gives, so it never opens these. Protectors put them there, often to fill the archive's index so that an editor has no room to add a file. Leaving them out makes the next save write the archive afresh, with room for the editor's own files; the map plays the same.": "\uAC8C\uC784\uC740 \uB9F5 \uC544\uCE74\uC774\uBE0C\uC758 \uD30C\uC77C\uC744 \uC2DC\uB098\uB9AC\uC624\uAC00 \uC8FC\uB294 \uC774\uB984\uC73C\uB85C\uB9CC \uC5F4\uAE30 \uB54C\uBB38\uC5D0 \uC774 \uD30C\uC77C\uB4E4\uC740 \uC808\uB300 \uC5F4\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. \uD504\uB85C\uD14D\uD130\uAC00 \uB123\uC5B4 \uB454 \uAC83\uC73C\uB85C, \uC5D0\uB514\uD130\uAC00 \uD30C\uC77C\uC744 \uCD94\uAC00\uD560 \uC790\uB9AC\uAC00 \uC5C6\uB3C4\uB85D \uC544\uCE74\uC774\uBE0C\uC758 \uC0C9\uC778\uC744 \uCC44\uC6B0\uB294 \uACBD\uC6B0\uAC00 \uB9CE\uC2B5\uB2C8\uB2E4. \uC774 \uD30C\uC77C\uB4E4\uC744 \uBE7C\uBA74 \uB2E4\uC74C \uC800\uC7A5 \uB54C \uC544\uCE74\uC774\uBE0C\uB97C \uC0C8\uB85C \uC368\uC11C \uC5D0\uB514\uD130\uC758 \uD30C\uC77C\uC744 \uB123\uC744 \uC790\uB9AC\uAC00 \uC0DD\uAE41\uB2C8\uB2E4. \uB9F5\uC740 \uB611\uAC19\uC774 \uD50C\uB808\uC774\uB429\uB2C8\uB2E4.",
+  "{n, plural, one {# archive file} other {# archive files}} nothing names left out of the next save": "\uC544\uBB34\uAC83\uB3C4 \uC774\uB984\uC73C\uB85C \uAC00\uB9AC\uD0A4\uC9C0 \uC54A\uB294 \uC544\uCE74\uC774\uBE0C \uD30C\uC77C {n}\uAC1C\uB97C \uB2E4\uC74C \uC800\uC7A5\uC5D0\uC11C \uBE8C"
 };
 
 // plugin.ts
-var HOST_REPAIRS = /* @__PURE__ */ new Set(["rebuild", "rebuild-isom", "set-strings"]);
+var HOST_REPAIRS = /* @__PURE__ */ new Set(["rebuild", "rebuild-isom", "set-strings", "drop-unreachable"]);
+var archiveOf = (api) => api.document.archive ?? null;
 function activate(api) {
   api.i18n.register({ ko: KO });
   const session = new Session(api);
@@ -1105,6 +1126,8 @@ var Session = class {
   /** How many of `done` were made by themselves as the map opened — the first ones. */
   auto = 0;
   log = [];
+  /** Puts back the archive members a `drop-unreachable` left out; null when none were. */
+  undoArchive = null;
   /** The map the fields above are about; the other open maps' copies wait in `parked`. */
   front = null;
   parked = /* @__PURE__ */ new Map();
@@ -1143,7 +1166,7 @@ var Session = class {
     this.handle?.close();
     const open = new Set(this.api.document.list().map((d) => d.id));
     if (this.front !== null && this.front !== e.id && open.has(this.front)) {
-      this.parked.set(this.front, { original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted });
+      this.parked.set(this.front, { original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted, undoArchive: this.undoArchive });
     }
     for (const id of this.parked.keys()) if (!open.has(id)) {
       this.parked.delete(id);
@@ -1153,7 +1176,7 @@ var Session = class {
     const back = e.id === null ? void 0 : this.parked.get(e.id);
     if (e.id !== null) this.parked.delete(e.id);
     if (e.reason === "switch" && back) {
-      ({ original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted } = back);
+      ({ original: this.original, analysis: this.analysis, done: this.done, auto: this.auto, log: this.log, attempted: this.attempted, undoArchive: this.undoArchive } = back);
       this.updateCell();
       if (this.stale.delete(e.id)) setTimeout(() => {
         void this.relabel();
@@ -1166,6 +1189,7 @@ var Session = class {
     this.auto = 0;
     this.log = [];
     this.attempted = /* @__PURE__ */ new Set();
+    this.undoArchive = null;
     this.updateCell();
     if (e.reason !== "open" && e.reason !== "new") return;
     this.original = { fileName: e.fileName, bytes: this.api.document.sections.file() };
@@ -1245,7 +1269,7 @@ var Session = class {
     } catch {
       isom = "unchecked";
     }
-    return analyze({ file, known, required, vcod, isom, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage(), t: this.t, unitTypes: await this.unitTypes() });
+    return analyze({ file, known, required, vcod, isom, archive: archiveOf(this.api)?.unreachable() ?? null, strings: this.api.query.strings(), text: this.api.text, usage: this.api.query.stringUsage(), t: this.t, unitTypes: await this.unitTypes() });
   }
   /** How many unit types the data set in use has; undefined (the game's 228) when no game data is loaded. */
   async unitTypes() {
@@ -1451,6 +1475,18 @@ var Session = class {
         done.push(note);
       }
       if (asOpened && (outcome.rebuild.length > 0 || outcome.rebuildIsom)) sections.replaceFile(sections.file(), { asOpened: true });
+      const archive = archiveOf(api);
+      if (outcome.dropUnreachable && archive) {
+        const { count, undo } = archive.dropUnreachable({ asOpened });
+        if (count > 0) {
+          const before = this.undoArchive;
+          this.undoArchive = () => {
+            undo();
+            before?.();
+          };
+        }
+        done.push(t("{n, plural, one {# archive file} other {# archive files}} nothing names left out of the next save", { n: count }));
+      }
       for (const s of outcome.skipped) done.push(t("skipped: {why}", { why: s }));
       if (!asOpened) api.ui.status(t("Repair: {done}.", { done: done.join("; ") }));
       this.log = [t("Done: {done}.", { done: done.join("; ") })];
@@ -1482,6 +1518,8 @@ var Session = class {
     this.busy = true;
     this.handle?.setBusy(this.t("Restoring the original\u2026"));
     try {
+      this.undoArchive?.();
+      this.undoArchive = null;
       api.document.sections.replaceFile(this.original.bytes);
       this.done = [];
       this.auto = 0;
